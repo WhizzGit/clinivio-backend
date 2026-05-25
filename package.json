@@ -1,0 +1,44 @@
+{
+  "name": "mediflow-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "node node_modules/prisma/build/index.js generate --schema=libs/database/prisma/schema.prisma && turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "node node_modules/prisma/build/index.js generate --schema=libs/database/prisma/schema.prisma",
+    "db:push": "node node_modules/prisma/build/index.js db push --schema=libs/database/prisma/schema.prisma",
+    "db:migrate": "node node_modules/prisma/build/index.js migrate deploy --schema=libs/database/prisma/schema.prisma",
+    "db:studio": "node node_modules/prisma/build/index.js studio --schema=libs/database/prisma/schema.prisma",
+    "db:seed": "node libs/database/prisma/seed.js",
+    "docker:dev": "docker-compose up -d",
+    "docker:down": "docker-compose down"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.5",
+    "turbo": "^1.12.4",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "msgpackr-extract",
+      "prisma",
+      "unrs-resolver"
+    ]
+  },
+  "dependencies": {
+    "@nestjs/throttler": "^6.5.0",
+    "helmet": "^8.1.0"
+  }
+}

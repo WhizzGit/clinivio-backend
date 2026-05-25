@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+coverage/
+
+# Environment secrets — NEVER commit; copy .env.example → .env
+.env
+.env.local
+*.env
+
+# Turbo build cache
+.turbo/
+
+# Logs
+*.log
+logs/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Prisma generated client (rebuilt on install)
+node_modules/.prisma/
+
+# Windows dev scripts (local only)
+*.ps1
+*.bat
+
+# Local API test requests
+requests/
+
+# Editor
+.vscode/settings.json
+.idea/
