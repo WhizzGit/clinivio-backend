@@ -3,7 +3,13 @@ const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcrypt');
 
 const prisma = new PrismaClient();
-const TENANT_ID = '7297d065-93f1-4487-b497-0551965cf607';
+
+// ─── Platform IDs (stable, never change) ─────────────────────────────────────
+const PLATFORM_TENANT_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+const PLATFORM_ADMIN_ID  = 'aaaaaaaa-aaaa-aaaa-aaaa-000000000001';
+
+// ─── Sample tenant ────────────────────────────────────────────────────────────
+const SAMPLE_TENANT_ID   = '7297d065-93f1-4487-b497-0551965cf607';
 
 async function hash(password) {
   return bcrypt.hash(password, 12);
@@ -12,93 +18,80 @@ async function hash(password) {
 async function main() {
   console.log('🌱  Seeding database...\n');
 
-  // ── Super Admin tenant (platform-level, no hospital) ─────────────────────────
-  const superTenant = await prisma.tenant.upsert({
-    where: { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' },
+  // ── Whizzon.ai Platform (SUPER_ADMIN) ────────────────────────────────────────
+  const platformTenant = await prisma.tenant.upsert({
+    where:  { id: PLATFORM_TENANT_ID },
     update: {},
     create: {
-      id: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
-      name: 'MediFlow Platform',
+      id:               PLATFORM_TENANT_ID,
+      name:             'Whizzon.ai',
       subscriptionTier: 'ENTERPRISE',
     },
   });
 
   await prisma.user.upsert({
-    where: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-000000000001' },
-    update: {},
+    where:  { id: PLATFORM_ADMIN_ID },
+    update: { email: 'superadmin@whizzon.ai', firstName: 'Whizzon', lastName: 'Admin' },
     create: {
-      id:           'aaaaaaaa-aaaa-aaaa-aaaa-000000000001',
-      tenantId:     superTenant.id,
-      email:        'superadmin@mediflow.io',
+      id:           PLATFORM_ADMIN_ID,
+      tenantId:     platformTenant.id,
+      email:        'superadmin@whizzon.ai',
       passwordHash: await hash('SuperAdmin@123'),
-      firstName:    'MediFlow',
+      firstName:    'Whizzon',
       lastName:     'Admin',
       role:         'SUPER_ADMIN',
     },
   });
-  console.log('  ✓ SUPER_ADMIN  superadmin@mediflow.io  (SuperAdmin@123)');
+  console.log('  ✓ SUPER_ADMIN   superadmin@whizzon.ai          (SuperAdmin@123)');
+  console.log('');
 
-  // ── Green Valley Hospital ────────────────────────────────────────────────────
+  // ── HANSVL Sample Tenant ─────────────────────────────────────────────────────
+  // Only the tenant admin is created here.
+  // All other staff (doctors, nurses, pharmacists, etc.) are created
+  // by the tenant admin through the dashboard — no hardcoding needed.
   await prisma.tenant.upsert({
-    where: { id: TENANT_ID },
+    where:  { id: SAMPLE_TENANT_ID },
     update: {},
     create: {
-      id:               TENANT_ID,
-      name:             'Green Valley Hospital',
-      address:          '12, MG Road',
-      city:             'Bangalore',
-      state:            'Karnataka',
-      phone:            '+91-80-12345678',
-      email:            'info@greenvalley.com',
+      id:               SAMPLE_TENANT_ID,
+      name:             'HANSVL Healthcare',
+      address:          '1, Tech Park Road',
+      city:             'Chennai',
+      state:            'Tamil Nadu',
+      phone:            '+91-44-12345678',
+      email:            'admin@hansvl.com',
       subscriptionTier: 'PREMIUM',
     },
   });
-  console.log('  ✓ Tenant: Green Valley Hospital (' + TENANT_ID + ')\n');
 
-  // ── Staff ────────────────────────────────────────────────────────────────────
-  const staff = [
-    { email: 'admin@greenvalley.com',      password: 'Admin@123',      firstName: 'Vijay',   lastName: 'Kumar',   role: 'ADMIN'          },
-    { email: 'dr.patel@greenvalley.com',   password: 'Doctor@1234',    firstName: 'Rajesh',  lastName: 'Patel',   role: 'DOCTOR'         },
-    { email: 'reception@greenvalley.com',  password: 'Reception@1234', firstName: 'Meena',   lastName: 'Sharma',  role: 'RECEPTIONIST'   },
-    { email: 'nurse@greenvalley.com',      password: 'Nurse@1234',     firstName: 'Kavitha', lastName: 'Reddy',   role: 'NURSE'          },
-    { email: 'pharmacist@greenvalley.com', password: 'Pharma@1234',    firstName: 'Ravi',    lastName: 'Shankar', role: 'PHARMACIST'     },
-    { email: 'lab@greenvalley.com',        password: 'Lab@1234',       firstName: 'Arjun',   lastName: 'Mehta',   role: 'LAB_TECHNICIAN' },
-  ];
+  const tenantAdmin = await prisma.user.upsert({
+    where:  { tenant_user_email_unique: { tenantId: SAMPLE_TENANT_ID, email: 'admin@hansvl.com' } },
+    update: {},
+    create: {
+      tenantId:     SAMPLE_TENANT_ID,
+      email:        'admin@hansvl.com',
+      passwordHash: await hash('Admin@123'),
+      firstName:    'HANSVL',
+      lastName:     'Admin',
+      role:         'ADMIN',
+    },
+  });
+  console.log('  ✓ Tenant:       HANSVL Healthcare (' + SAMPLE_TENANT_ID + ')');
+  console.log('  ✓ ADMIN         admin@hansvl.com               (Admin@123)');
+  console.log('');
+  console.log('  ℹ  Log in as admin@hansvl.com to create doctors, nurses,');
+  console.log('     pharmacists and other staff from the dashboard.');
+  console.log('');
 
-  for (const s of staff) {
-    const user = await prisma.user.upsert({
-      where: { tenant_user_email_unique: { tenantId: TENANT_ID, email: s.email } },
-      update: {},
-      create: {
-        tenantId:     TENANT_ID,
-        email:        s.email,
-        passwordHash: await hash(s.password),
-        firstName:    s.firstName,
-        lastName:     s.lastName,
-        role:         s.role,
-      },
-    });
-
-    if (s.role === 'DOCTOR') {
-      await prisma.doctorProfile.upsert({
-        where: { userId: user.id },
-        update: {},
-        create: {
-          userId:         user.id,
-          tenantId:       TENANT_ID,
-          specialty:      'General Medicine',
-          qualification:  'MBBS, MD',
-          registrationNo: 'KMC-12345',
-          consultationFee: 500,
-          experienceYears: 10,
-        },
-      });
-    }
-
-    console.log(`  ✓ ${s.role.padEnd(15)} ${s.email.padEnd(35)} (${s.password})`);
-  }
-
-  console.log('\n✅  Seed complete!');
+  console.log('✅  Seed complete!');
+  console.log('');
+  console.log('  Platform login:');
+  console.log('    Email:    superadmin@whizzon.ai');
+  console.log('    Password: SuperAdmin@123');
+  console.log('');
+  console.log('  Tenant login (use tenantId: ' + SAMPLE_TENANT_ID + '):');
+  console.log('    Email:    admin@hansvl.com');
+  console.log('    Password: Admin@123');
 }
 
 main()
