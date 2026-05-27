@@ -53,8 +53,11 @@ export async function bootstrapApp(app: INestApplication, opts: BootstrapOptions
   // ── Validation ──────────────────────────────────────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
+      // whitelist strips un-decorated properties — our service DTOs are plain classes
+      // (no class-validator decorators), so whitelist MUST be false or all body
+      // properties would be stripped and every POST/PATCH would arrive empty.
+      whitelist: false,
+      forbidNonWhitelisted: false,
       transform: true,
       transformOptions: { enableImplicitConversion: true },
     }),

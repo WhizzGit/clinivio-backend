@@ -1,45 +1,50 @@
-# render.yaml — Render Blueprint for MediFlow Backend
+# render.yaml — Render Blueprint for Clinivio Backend
 # Docs: https://render.com/docs/blueprint-spec
 #
-# Deploy all 6 NestJS services + Redis with one click.
-# Each service is built from its Dockerfile in the monorepo.
+# Single unified NestJS API service — all former microservices merged into one.
+# One Docker build, one endpoint, one Redis instance.
 #
 # One-time setup after first deploy:
-#   1. Set DATABASE_URL in each service's Render env vars dashboard
-#      (use Neon pooler URL: ep-xxxx-pooler.c-8.us-east-1.aws.neon.tech)
-#   2. Set KAFKA_BROKERS to your Upstash Kafka bootstrap server
-#   3. Set JWT_SECRET, JWT_REFRESH_SECRET (same value across all services)
+#   1. Set DATABASE_URL to your Neon pooler URL in the Render dashboard
+#      (e.g. postgres://user:pass@ep-xxxx-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require)
+#   2. Set JWT_SECRET, JWT_REFRESH_SECRET to secure random strings
+#   3. Optionally set KAFKA_BROKERS (Upstash), WHATSAPP_*, RAZORPAY_*, MSG91_*
 
 services:
-  # ─── Redis ──────────────────────────────────────────────────────────────────
+  # ─── Redis (Bull queues + session cache) ────────────────────────────────────
   - type: redis
-    name: mediflow-redis
+    name: clinivio-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []                    # private — only accessible to Render services
+    ipAllowList: []           # private — only accessible to Render services
 
-  # ─── IAM Service (Auth + Tenants) ───────────────────────────────────────────
+  # ─── Unified API ────────────────────────────────────────────────────────────
   - type: web
-    name: mediflow-iam-service
+    name: clinivio-api
     runtime: docker
-    dockerfilePath: ./apps/iam-service/Dockerfile
+    dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     plan: free
     healthCheckPath: /health
     envVars:
+      # ── Server ──────────────────────────────────────────────────────────────
       - key: PORT
         value: 3000
       - key: NODE_ENV
         value: production
+
+      # ── Database (Neon) ──────────────────────────────────────────────────────
       - key: DATABASE_URL
-        sync: false                    # Set manually in Render dashboard
+        sync: false           # Set manually: Neon pooler URL
+
+      # ── Redis ────────────────────────────────────────────────────────────────
       - key: REDIS_URL
         fromService:
           type: redis
-          name: mediflow-redis
+          name: clinivio-redis
           property: connectionString
-      - key: KAFKA_BROKERS
-        sync: false                    # Upstash Kafka bootstrap URL
+
+      # ── JWT ──────────────────────────────────────────────────────────────────
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRES_IN
@@ -49,156 +54,21 @@ services:
       - key: JWT_REFRESH_EXPIRES_IN
         value: 7d
 
-  # ─── Patient Service ────────────────────────────────────────────────────────
-  - type: web
-    name: mediflow-patient-service
-    runtime: docker
-    dockerfilePath: ./apps/patient-service/Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: 3000
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: mediflow-redis
-          property: connectionString
+      # ── Kafka (optional — Upstash) ───────────────────────────────────────────
       - key: KAFKA_BROKERS
         sync: false
-      - key: JWT_SECRET
+      - key: KAFKA_SASL_USERNAME
         sync: false
-      - key: JWT_EXPIRES_IN
-        value: 1d
-      - key: JWT_REFRESH_SECRET
+      - key: KAFKA_SASL_PASSWORD
         sync: false
-      - key: JWT_REFRESH_EXPIRES_IN
-        value: 7d
+      - key: KAFKA_SSL
+        value: 'true'
+      - key: KAFKA_CLIENT_ID
+        value: clinivio-api
+      - key: KAFKA_GROUP_ID
+        value: clinivio-api-group
 
-  # ─── Appointment Service (OPD, IPD, Lab, Pharmacy, Stats) ──────────────────
-  - type: web
-    name: mediflow-appointment-service
-    runtime: docker
-    dockerfilePath: ./apps/appointment-service/Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: 3000
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: mediflow-redis
-          property: connectionString
-      - key: KAFKA_BROKERS
-        sync: false
-      - key: JWT_SECRET
-        sync: false
-      - key: JWT_EXPIRES_IN
-        value: 1d
-      - key: JWT_REFRESH_SECRET
-        sync: false
-      - key: JWT_REFRESH_EXPIRES_IN
-        value: 7d
-
-  # ─── Billing Service ────────────────────────────────────────────────────────
-  - type: web
-    name: mediflow-billing-service
-    runtime: docker
-    dockerfilePath: ./apps/billing-service/Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: 3000
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: mediflow-redis
-          property: connectionString
-      - key: KAFKA_BROKERS
-        sync: false
-      - key: JWT_SECRET
-        sync: false
-      - key: JWT_EXPIRES_IN
-        value: 1d
-      - key: JWT_REFRESH_SECRET
-        sync: false
-      - key: JWT_REFRESH_EXPIRES_IN
-        value: 7d
-      - key: RAZORPAY_KEY_ID
-        sync: false
-      - key: RAZORPAY_KEY_SECRET
-        sync: false
-
-  # ─── Notification Service ───────────────────────────────────────────────────
-  - type: web
-    name: mediflow-notification-service
-    runtime: docker
-    dockerfilePath: ./apps/notification-service/Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: 3000
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: mediflow-redis
-          property: connectionString
-      - key: KAFKA_BROKERS
-        sync: false
-      - key: JWT_SECRET
-        sync: false
-      - key: MSG91_AUTH_KEY
-        sync: false
-      - key: MSG91_SENDER_ID
-        value: MEDFLW
-
-  # ─── WhatsApp Engine ────────────────────────────────────────────────────────
-  - type: web
-    name: mediflow-whatsapp-engine
-    runtime: docker
-    dockerfilePath: ./apps/whatsapp-engine/Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: 3000
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: mediflow-redis
-          property: connectionString
-      - key: KAFKA_BROKERS
-        sync: false
-      - key: JWT_SECRET
-        sync: false
+      # ── WhatsApp Business ────────────────────────────────────────────────────
       - key: WHATSAPP_PHONE_NUMBER_ID
         sync: false
       - key: WHATSAPP_ACCESS_TOKEN
@@ -207,3 +77,29 @@ services:
         sync: false
       - key: WHATSAPP_APP_SECRET
         sync: false
+
+      # ── Razorpay (optional) ───────────────────────────────────────────────────
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+
+      # ── SMS / MSG91 (optional) ────────────────────────────────────────────────
+      - key: MSG91_AUTH_KEY
+        sync: false
+      - key: MSG91_SENDER_ID
+        value: CLNVIO
+
+      # ── Rate limiting ─────────────────────────────────────────────────────────
+      - key: THROTTLE_TTL
+        value: '60000'
+      - key: THROTTLE_LIMIT
+        value: '120'
+
+      # ── GST rates ─────────────────────────────────────────────────────────────
+      - key: GST_CGST_RATE
+        value: '0.09'
+      - key: GST_SGST_RATE
+        value: '0.09'
+      - key: GST_IGST_RATE
+        value: '0.18'

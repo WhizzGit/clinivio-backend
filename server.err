@@ -1,0 +1,46 @@
+(node:18032) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
+
+To prepare for this change:
+- If you want the current behavior, explicitly use 'sslmode=verify-full'
+- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
+
+See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:18032) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+{"level":"ERROR","timestamp":"2026-05-27T04:51:56.275Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:56.276Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":0,"retryTime":358}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:56.644Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:56.658Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":1,"retryTime":598}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:57.265Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:57.278Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":2,"retryTime":1340}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:58.635Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
+{"level":"ERROR","timestamp":"2026-05-27T04:51:58.639Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":3,"retryTime":2842}
+{"level":"ERROR","timestamp":"2026-05-27T04:52:01.495Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
+{"level":"ERROR","timestamp":"2026-05-27T04:52:01.496Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":4,"retryTime":4582}
+{"level":"ERROR","timestamp":"2026-05-27T04:52:06.088Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
+{"level":"ERROR","timestamp":"2026-05-27T04:52:06.088Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":5,"retryTime":10554}
+[31m[Nest] 18032  - [39m05/27/2026, 10:22:06 AM [31m  ERROR[39m [38;5;3m[NestApplication] [39m[31mError: listen EADDRINUSE: address already in use :::3000[39m[38;5;3m +3ms[39m
+node:net:1940
+    const ex = new UVExceptionWithHostPort(err, 'listen', address, port);
+               ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at ExpressAdapter.listen (D:\Projects\clinivio-backend\node_modules\.pnpm\@nestjs+platform-express@10.4.22_@nestjs+common@10.4.22_@nestjs+core@10.4.22\node_modules\@nestjs\platform-express\adapters\express-adapter.js:95:32)
+    at D:\Projects\clinivio-backend\node_modules\.pnpm\@nestjs+core@10.4.22_@nestjs+common@10.4.22_@nestjs+microservices@10.4.22_@nestjs+platform-ex_tbjkzknkpl6emciym2nlinka6m\node_modules\@nestjs\core\nest-application.js:183:30
+    at new Promise (<anonymous>)
+    at NestApplication.listen (D:\Projects\clinivio-backend\node_modules\.pnpm\@nestjs+core@10.4.22_@nestjs+common@10.4.22_@nestjs+microservices@10.4.22_@nestjs+platform-ex_tbjkzknkpl6emciym2nlinka6m\node_modules\@nestjs\core\nest-application.js:173:16)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async bootstrapApp (D:\Projects\clinivio-backend\libs\shared\dist\bootstrap\bootstrap-app.js:60:5)
+    at async bootstrap (D:\Projects\clinivio-backend\apps\api\dist\main.js:8:5) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v22.19.0
