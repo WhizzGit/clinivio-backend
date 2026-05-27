@@ -20,3 +20,29 @@ See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode de
 {"level":"ERROR","timestamp":"2026-05-27T05:10:09.540Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":4,"retryTime":5446}
 {"level":"ERROR","timestamp":"2026-05-27T05:10:14.998Z","logger":"kafkajs","message":"[Connection] Connection error: ","broker":"localhost:9092","clientId":"clinivio-api","stack":"AggregateError [ECONNREFUSED]: \n    at internalConnectMultiple (node:net:1134:18)\n    at afterConnectMultiple (node:net:1715:7)"}
 {"level":"ERROR","timestamp":"2026-05-27T05:10:15.000Z","logger":"kafkajs","message":"[BrokerPool] Failed to connect to seed broker, trying another broker from the list: Connection error: ","retryCount":5,"retryTime":13020}
+[31m[Nest] 20228  - [39m05/27/2026, 12:53:12 PM [31m  ERROR[39m [38;5;3m[ReminderService] [39m[31msendQueueAlerts failed: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech[39m
+Error: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[31m[Nest] 20228  - [39m05/27/2026, 6:32:51 PM [31m  ERROR[39m [38;5;3m[ReminderService] [39m[31msendHourlyReminders failed: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech[39m
+Error: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[31m[Nest] 20228  - [39m05/27/2026, 6:32:51 PM [31m  ERROR[39m [38;5;3m[ReminderService] [39m[31msendQueueAlerts failed: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech[39m
+Error: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[31m[Nest] 20228  - [39m05/27/2026, 9:47:44 PM [31m  ERROR[39m [38;5;3m[HTTP] [39m[31m← [0e8fc2f9-8419-4690-a1d1-2c6c006dec91] GET /appointments/active? ERROR=read ECONNRESET 1285332ms[39m
+[31m[Nest] 20228  - [39m05/27/2026, 9:47:44 PM [31m  ERROR[39m [38;5;3m[AllExceptionsFilter] [39m[31m[0e8fc2f9-8419-4690-a1d1-2c6c006dec91] Unhandled exception on GET /appointments/active?: read ECONNRESET[39m
+Error: read ECONNRESET
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20)
+[31m[Nest] 20228  - [39m05/27/2026, 9:47:45 PM [31m  ERROR[39m [38;5;3m[ReminderService] [39m[31msendQueueAlerts failed: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech[39m
+Error: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[31m[Nest] 20228  - [39m05/27/2026, 9:47:45 PM [31m  ERROR[39m [38;5;3m[ReminderService] [39m[31msendHourlyReminders failed: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech[39m
+Error: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[31m[Nest] 20228  - [39m05/27/2026, 9:56:08 PM [31m  ERROR[39m [38;5;3m[ReminderService] [39m[31msendQueueAlerts failed: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech[39m
+Error: getaddrinfo ENOTFOUND ep-curly-violet-aq3pbcot-pooler.c-8.us-east-1.aws.neon.tech
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[31m[Nest] 20228  - [39m05/27/2026, 10:51:59 PM [31m  ERROR[39m [31mHealth Check has failed! {"database":{"status":"down","message":"timeout of 1000ms exceeded"}}[39m
+[31m[Nest] 20228  - [39m05/27/2026, 10:51:59 PM [31m  ERROR[39m [38;5;3m[HTTP] [39m[31m← [a43db1c8-bfec-4680-b277-04cab90034b1] GET /health ERROR=Service Unavailable Exception 1038ms[39m
+[31m[Nest] 20228  - [39m05/27/2026, 10:52:10 PM [31m  ERROR[39m [31mHealth Check has failed! {"database":{"status":"down","message":"timeout of 1000ms exceeded"}}[39m
+[31m[Nest] 20228  - [39m05/27/2026, 10:52:10 PM [31m  ERROR[39m [38;5;3m[HTTP] [39m[31m← [5d1b622e-6760-4f48-9d10-ec2b7b90c1bc] GET /health ERROR=Service Unavailable Exception 1032ms[39m

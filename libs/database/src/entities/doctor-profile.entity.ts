@@ -58,7 +58,7 @@ export class DoctorProfile {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, { onDelete: 'CASCADE', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'tenant_id' })
   tenant: Tenant;
 

@@ -16,9 +16,11 @@ export class Tenant {
    * URL-safe slug — uniquely identifies the tenant in subdomains and schema names.
    * e.g. "hansvl" → subdomain hansvl.clinivio.ai, schema tenant_hansvl
    * Auto-generated from name if not provided; must be lowercase alphanumeric + hyphens.
+   * Nullable so synchronize can add this column to tenants tables that predate multi-tenancy.
+   * Re-run the seed (or set a slug via PATCH /tenants/:id) to populate existing rows.
    */
-  @Column({ unique: true })
-  slug: string;
+  @Column({ unique: true, nullable: true })
+  slug: string | null;
 
   @Column({ nullable: true })
   address: string | null;

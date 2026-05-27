@@ -50,7 +50,7 @@ export class NotificationLog {
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, { onDelete: 'CASCADE', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'tenant_id' })
   tenant: Tenant;
 

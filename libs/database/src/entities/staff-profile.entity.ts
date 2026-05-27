@@ -79,7 +79,7 @@ export class StaffProfile {
   @JoinColumn({ name: 'user_id' })
   user: any;
 
-  @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, { onDelete: 'CASCADE', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'tenant_id' })
   tenant: Tenant;
 

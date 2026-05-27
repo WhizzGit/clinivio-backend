@@ -40,7 +40,7 @@ export class PharmacyOrder {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, { onDelete: 'CASCADE', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'tenant_id' })
   tenant: Tenant;
 
@@ -106,7 +106,7 @@ export class PharmacyInventory {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @ManyToOne(() => Tenant, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Tenant, { onDelete: 'CASCADE', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'tenant_id' })
   tenant: Tenant;
 }
