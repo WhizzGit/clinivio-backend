@@ -1,12 +1,11 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import {
   NotificationLog,
   NotificationChannel,
   NotificationStatus,
+  TenantEntityManager,
 } from '@mediflow/database';
 
 export class CreateNotificationDto {
@@ -24,15 +23,14 @@ export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    @InjectRepository(NotificationLog)
-    private notificationLogRepo: Repository<NotificationLog>,
+    private readonly db: TenantEntityManager,
     @InjectQueue('notifications')
     private notificationsQueue: Queue,
   ) {}
 
   async create(tenantId: string, dto: CreateNotificationDto) {
-    const log = await this.notificationLogRepo.save(
-      this.notificationLogRepo.create({
+    const log = await this.db.repo(NotificationLog).save(
+      this.db.repo(NotificationLog).create({
         tenantId,
         patientId: dto.patientId,
         channel: dto.channel,
@@ -74,8 +72,7 @@ export class NotificationsService {
   }
 
   async updateStatus(wamid: string, status: NotificationStatus, timestamp: string) {
-    const log = await this.notificationLogRepo
-      .createQueryBuilder('log')
+    const log = await this.db.qb(NotificationLog, 'log')
       .where('log.wamid = :wamid', { wamid })
       .getOne();
 
@@ -94,12 +91,12 @@ export class NotificationsService {
       updateData.readAt = new Date(timestamp);
     }
 
-    await this.notificationLogRepo.update(log.id, updateData);
-    return this.notificationLogRepo.findOne({ where: { id: log.id } });
+    await this.db.repo(NotificationLog).update(log.id, updateData);
+    return this.db.repo(NotificationLog).findOne({ where: { id: log.id } });
   }
 
   async findByPatient(patientId: string, tenantId: string) {
-    return this.notificationLogRepo.find({
+    return this.db.repo(NotificationLog).find({
       where: { patientId, tenantId },
       order: { createdAt: 'DESC' },
       take: 50,
@@ -107,7 +104,7 @@ export class NotificationsService {
   }
 
   async findById(id: string, tenantId: string) {
-    const log = await this.notificationLogRepo.findOne({
+    const log = await this.db.repo(NotificationLog).findOne({
       where: { id, tenantId },
     });
     if (!log) throw new NotFoundException(`Notification log ${id} not found`);
@@ -115,8 +112,8 @@ export class NotificationsService {
   }
 
   async enqueueWithDelay(tenantId: string, dto: CreateNotificationDto, delayMs: number) {
-    const log = await this.notificationLogRepo.save(
-      this.notificationLogRepo.create({
+    const log = await this.db.repo(NotificationLog).save(
+      this.db.repo(NotificationLog).create({
         tenantId,
         patientId: dto.patientId,
         channel: dto.channel,
@@ -148,19 +145,19 @@ export class NotificationsService {
   }
 
   async markFailed(id: string, reason: string) {
-    await this.notificationLogRepo.update(id, {
+    await this.db.repo(NotificationLog).update(id, {
       status: NotificationStatus.FAILED,
       failureReason: reason,
     });
-    return this.notificationLogRepo.findOne({ where: { id } });
+    return this.db.repo(NotificationLog).findOne({ where: { id } });
   }
 
   async markSent(id: string, wamid?: string) {
-    await this.notificationLogRepo.update(id, {
+    await this.db.repo(NotificationLog).update(id, {
       status: NotificationStatus.SENT,
       wamid: wamid ?? null,
       sentAt: new Date(),
     });
-    return this.notificationLogRepo.findOne({ where: { id } });
+    return this.db.repo(NotificationLog).findOne({ where: { id } });
   }
 }

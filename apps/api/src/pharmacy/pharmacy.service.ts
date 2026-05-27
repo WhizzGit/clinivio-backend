@@ -2,16 +2,14 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
 import {
   PharmacyOrder,
   PharmacyInventory,
   Appointment,
-  Tenant,
   PharmacyOrderStatus,
+  TenantEntityManager,
+  ILike,
 } from '@mediflow/database';
 
 export class CreateInventoryItemDto {
@@ -52,18 +50,7 @@ export class UpdatePharmacyOrderDto {
 
 @Injectable()
 export class PharmacyService {
-  constructor(
-    @InjectRepository(PharmacyOrder)
-    private pharmacyOrderRepo: Repository<PharmacyOrder>,
-    @InjectRepository(PharmacyInventory)
-    private inventoryRepo: Repository<PharmacyInventory>,
-    @InjectRepository(Tenant)
-    private tenantRepo: Repository<Tenant>,
-    @InjectRepository(Appointment)
-    private appointmentRepo: Repository<Appointment>,
-  ) {}
-
-  // ─── Pharmacy Orders ─────────────────────────────────────────────────────────
+  constructor(private readonly db: TenantEntityManager) {}
 
   async findAll(
     tenantId: string,
@@ -73,8 +60,8 @@ export class PharmacyService {
   ) {
     const skip = (page - 1) * limit;
 
-    const qb = this.pharmacyOrderRepo
-      .createQueryBuilder('po')
+    const qb = this.db
+      .qb(PharmacyOrder, 'po')
       .leftJoinAndSelect('po.patient', 'patient')
       .leftJoinAndSelect('po.appointment', 'appointment')
       .leftJoinAndSelect('appointment.doctor', 'doctor')
@@ -84,15 +71,9 @@ export class PharmacyService {
       .leftJoinAndSelect('prescriptions.items', 'items')
       .where('po.tenantId = :tenantId', { tenantId });
 
-    if (filters.status) {
-      qb.andWhere('po.status = :status', { status: filters.status });
-    }
-    if (filters.from) {
-      qb.andWhere('po.createdAt >= :from', { from: new Date(filters.from) });
-    }
-    if (filters.to) {
-      qb.andWhere('po.createdAt <= :to', { to: new Date(filters.to) });
-    }
+    if (filters.status) qb.andWhere('po.status = :status', { status: filters.status });
+    if (filters.from) qb.andWhere('po.createdAt >= :from', { from: new Date(filters.from) });
+    if (filters.to) qb.andWhere('po.createdAt <= :to', { to: new Date(filters.to) });
 
     qb.orderBy('po.createdAt', 'DESC').skip(skip).take(limit);
 
@@ -101,8 +82,8 @@ export class PharmacyService {
   }
 
   async findOrderById(id: string, tenantId: string) {
-    const order = await this.pharmacyOrderRepo
-      .createQueryBuilder('po')
+    const order = await this.db
+      .qb(PharmacyOrder, 'po')
       .leftJoinAndSelect('po.patient', 'patient')
       .leftJoinAndSelect('po.appointment', 'appointment')
       .leftJoinAndSelect('appointment.doctor', 'doctor')
@@ -119,21 +100,17 @@ export class PharmacyService {
   }
 
   async updateOrder(id: string, tenantId: string, dto: UpdatePharmacyOrderDto) {
-    const order = await this.pharmacyOrderRepo.findOne({ where: { id, tenantId } });
+    const order = await this.db.repo(PharmacyOrder).findOne({ where: { id, tenantId } });
     if (!order) throw new NotFoundException('Pharmacy order not found');
 
     const updates: Partial<PharmacyOrder> = {};
     if (dto.status) updates.status = dto.status;
     if (dto.dispenserNotes !== undefined) updates.dispenserNotes = dto.dispenserNotes;
-    if (dto.status === PharmacyOrderStatus.DISPENSED) {
-      updates.dispensedAt = new Date();
-    }
+    if (dto.status === PharmacyOrderStatus.DISPENSED) updates.dispensedAt = new Date();
 
-    await this.pharmacyOrderRepo.update(id, updates);
+    await this.db.repo(PharmacyOrder).update(id, updates);
     return this.findOrderById(id, tenantId);
   }
-
-  // ─── Inventory ───────────────────────────────────────────────────────────────
 
   async listInventory(tenantId: string, q?: string, page = 1, limit = 50) {
     const skip = (page - 1) * limit;
@@ -142,7 +119,7 @@ export class PharmacyService {
     let total: number;
 
     if (q) {
-      [items, total] = await this.inventoryRepo.findAndCount({
+      [items, total] = await this.db.repo(PharmacyInventory).findAndCount({
         where: [
           { tenantId, isActive: true, name: ILike(`%${q}%`) },
           { tenantId, isActive: true, genericName: ILike(`%${q}%`) },
@@ -153,7 +130,7 @@ export class PharmacyService {
         take: limit,
       });
     } else {
-      [items, total] = await this.inventoryRepo.findAndCount({
+      [items, total] = await this.db.repo(PharmacyInventory).findAndCount({
         where: { tenantId, isActive: true },
         order: { name: 'ASC' },
         skip,
@@ -165,14 +142,14 @@ export class PharmacyService {
   }
 
   async findInventoryItem(id: string, tenantId: string) {
-    const item = await this.inventoryRepo.findOne({ where: { id, tenantId } });
+    const item = await this.db.repo(PharmacyInventory).findOne({ where: { id, tenantId } });
     if (!item) throw new NotFoundException('Inventory item not found');
     return item;
   }
 
   async createInventoryItem(tenantId: string, dto: CreateInventoryItemDto) {
-    const item = await this.inventoryRepo.save(
-      this.inventoryRepo.create({
+    return this.db.repo(PharmacyInventory).save(
+      this.db.repo(PharmacyInventory).create({
         tenantId,
         name: dto.name,
         genericName: dto.genericName ?? null,
@@ -189,7 +166,6 @@ export class PharmacyService {
         isActive: true,
       }),
     );
-    return item;
   }
 
   async updateInventoryItem(id: string, tenantId: string, dto: UpdateInventoryItemDto) {
@@ -210,23 +186,20 @@ export class PharmacyService {
     if (dto.hsn !== undefined) updates.hsn = dto.hsn;
     if (dto.isActive !== undefined) updates.isActive = dto.isActive;
 
-    await this.inventoryRepo.update(id, updates);
-    return this.inventoryRepo.findOne({ where: { id } });
+    await this.db.repo(PharmacyInventory).update(id, updates);
+    return this.db.repo(PharmacyInventory).findOne({ where: { id } });
   }
 
   async adjustStock(id: string, tenantId: string, delta: number) {
     const item = await this.findInventoryItem(id, tenantId);
     const newQty = item.stockQty + delta;
-    if (newQty < 0) {
-      throw new BadRequestException('Insufficient stock');
-    }
-    await this.inventoryRepo.update(id, { stockQty: newQty });
-    return this.inventoryRepo.findOne({ where: { id } });
+    if (newQty < 0) throw new BadRequestException('Insufficient stock');
+    await this.db.repo(PharmacyInventory).update(id, { stockQty: newQty });
+    return this.db.repo(PharmacyInventory).findOne({ where: { id } });
   }
 
   async getLowStockItems(tenantId: string) {
-    return this.inventoryRepo
-      .createQueryBuilder('inv')
+    return this.db.qb(PharmacyInventory, 'inv')
       .where('inv.tenantId = :tenantId', { tenantId })
       .andWhere('inv.isActive = true')
       .andWhere('inv.stockQty <= inv.reorderLevel')
@@ -240,8 +213,7 @@ export class PharmacyService {
     future.setDate(future.getDate() + withinDays);
     const futureDate = future.toISOString().split('T')[0];
 
-    return this.inventoryRepo
-      .createQueryBuilder('inv')
+    return this.db.qb(PharmacyInventory, 'inv')
       .where('inv.tenantId = :tenantId', { tenantId })
       .andWhere('inv.isActive = true')
       .andWhere('inv.expiryDate IS NOT NULL')

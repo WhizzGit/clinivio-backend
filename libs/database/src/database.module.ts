@@ -2,11 +2,19 @@ import { Module, Global } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ALL_ENTITIES } from './entities';
+import { TenantDataSourceRegistry } from './tenant-datasource.registry';
+import { TenantEntityManager } from './tenant-entity-manager';
 
 /**
  * Global DatabaseModule — import once in AppModule.
- * Provides a TypeORM DataSource connected to Neon PostgreSQL.
- * Use TypeOrmModule.forFeature([...]) in feature modules to inject repositories.
+ *
+ * Provides two layers:
+ *  1. Platform DataSource (TypeORM forRoot) — connects to Neon, public schema.
+ *     Used for Tenant CRUD and SUPER_ADMIN auth.
+ *  2. TenantDataSourceRegistry — manages per-tenant DataSources (one per slug).
+ *     Uses AsyncLocalStorage to propagate the active tenant context through the request chain.
+ *  3. TenantEntityManager — global singleton wrapper; auto-routes to the current tenant's DS.
+ *     Inject this in all feature services instead of @InjectRepository().
  */
 @Global()
 @Module({
@@ -21,30 +29,28 @@ import { ALL_ENTITIES } from './entities';
           type: 'postgres',
           url: dbUrl,
           entities: ALL_ENTITIES,
-          // Auto-sync in dev (creates/alters tables). NEVER in production.
+          // Auto-sync in dev (creates/alters tables in public schema). NEVER in production.
           synchronize: process.env.NODE_ENV !== 'production',
-          // Set DB_RESET=true for a one-time drop & recreate (dev only)
           dropSchema: process.env.NODE_ENV !== 'production' && process.env.DB_RESET === 'true',
           ssl: process.env.NODE_ENV === 'production'
             ? { rejectUnauthorized: false }
             : false,
           logging: process.env.LOG_QUERIES === 'true' ? ['query', 'error'] : ['error'],
-          // Retry on transient Neon wakeup failures (ENOTFOUND / ECONNREFUSED / ETIMEDOUT)
           retryAttempts: 20,
           retryDelay: 3000,
           extra: {
-            // Neon serverless — keep pool small to avoid idle-connection billing
             max: 5,
-            min: 0,          // allow full idle so Neon compute can suspend
-            idleTimeoutMillis: 5000,         // proactively drop idle before Neon closes them
-            connectionTimeoutMillis: 60000, // 60s — Neon cold-start can take 30-40s
-            keepAlive: true,                 // prevent NAT/firewall dropping idle TCP connections
+            min: 0,
+            idleTimeoutMillis: 5000,
+            connectionTimeoutMillis: 60000,
+            keepAlive: true,
             keepAliveInitialDelayMillis: 10000,
           },
         };
       },
     }),
   ],
-  exports: [TypeOrmModule],
+  providers: [TenantDataSourceRegistry, TenantEntityManager],
+  exports: [TypeOrmModule, TenantDataSourceRegistry, TenantEntityManager],
 })
 export class DatabaseModule {}

@@ -1,8 +1,6 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
-import { Patient, PatientFamily } from '@mediflow/database';
+import { Patient, PatientFamily, TenantEntityManager, ILike } from '@mediflow/database';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
@@ -18,14 +16,13 @@ const PATIENT_SELECT: (keyof Patient)[] = [
 @Injectable()
 export class PatientsService {
   constructor(
-    @InjectRepository(Patient) private patientRepo: Repository<Patient>,
-    @InjectRepository(PatientFamily) private familyRepo: Repository<PatientFamily>,
+    private readonly db: TenantEntityManager,
     private kafka: KafkaProducerService,
   ) {}
 
   private async generateUHID(tenantId: string): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await this.patientRepo.count({ where: { tenantId } });
+    const count = await this.db.repo(Patient).count({ where: { tenantId } });
     return `MF-${year}-${String(count + 1).padStart(6, '0')}`;
   }
 
@@ -34,20 +31,20 @@ export class PatientsService {
     const whatsappPhone = dto.whatsappPhone || dto.phone;
 
     if (!familyId && whatsappPhone) {
-      let family = await this.familyRepo.findOne({
+      let family = await this.db.repo(PatientFamily).findOne({
         where: { tenantId, whatsappPhone },
       });
       if (!family) {
-        family = await this.familyRepo.save(
-          this.familyRepo.create({ tenantId, whatsappPhone }),
+        family = await this.db.repo(PatientFamily).save(
+          this.db.repo(PatientFamily).create({ tenantId, whatsappPhone }),
         );
       }
       familyId = family.id;
     }
 
     const uhid = await this.generateUHID(tenantId);
-    const patient = await this.patientRepo.save(
-      this.patientRepo.create({
+    const patient = await this.db.repo(Patient).save(
+      this.db.repo(Patient).create({
         tenantId,
         familyId,
         uhid,
@@ -71,7 +68,7 @@ export class PatientsService {
     );
 
     // Set as primary patient if family has none
-    await this.familyRepo
+    await this.db.repo(PatientFamily)
       .createQueryBuilder()
       .update()
       .set({ primaryPatientId: patient.id })
@@ -101,7 +98,7 @@ export class PatientsService {
 
   async findAll(tenantId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const [data, total] = await this.patientRepo.findAndCount({
+    const [data, total] = await this.db.repo(Patient).findAndCount({
       where: { tenantId, isActive: true },
       select: PATIENT_SELECT,
       skip,
@@ -112,7 +109,7 @@ export class PatientsService {
   }
 
   async findById(id: string, tenantId: string) {
-    const patient = await this.patientRepo.findOne({
+    const patient = await this.db.repo(Patient).findOne({
       where: { id, tenantId },
       relations: ['family'],
     });
@@ -121,7 +118,7 @@ export class PatientsService {
   }
 
   async findByPhone(phone: string, tenantId: string) {
-    const patient = await this.patientRepo.findOne({
+    const patient = await this.db.repo(Patient).findOne({
       where: [
         { phone, tenantId },
         { whatsappPhone: phone, tenantId },
@@ -133,7 +130,7 @@ export class PatientsService {
   }
 
   async findByFamily(familyId: string, tenantId: string) {
-    const members = await this.patientRepo.find({
+    const members = await this.db.repo(Patient).find({
       where: { familyId, tenantId, isActive: true },
       select: PATIENT_SELECT,
       order: { createdAt: 'ASC' },
@@ -143,7 +140,7 @@ export class PatientsService {
   }
 
   async findFamilyByWhatsapp(whatsappPhone: string, tenantId: string) {
-    const family = await this.familyRepo.findOne({
+    const family = await this.db.repo(PatientFamily).findOne({
       where: { whatsappPhone, tenantId },
       relations: ['patients'],
     });
@@ -153,7 +150,7 @@ export class PatientsService {
 
   async search(tenantId: string, q: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const [data, total] = await this.patientRepo.findAndCount({
+    const [data, total] = await this.db.repo(Patient).findAndCount({
       where: [
         { tenantId, isActive: true, firstName: ILike(`%${q}%`) },
         { tenantId, isActive: true, lastName: ILike(`%${q}%`) },
@@ -170,7 +167,7 @@ export class PatientsService {
 
   async update(id: string, tenantId: string, dto: UpdatePatientDto) {
     await this.findById(id, tenantId);
-    await this.patientRepo.update(id, {
+    await this.db.repo(Patient).update(id, {
       firstName: dto.firstName,
       lastName: dto.lastName,
       email: dto.email,
@@ -189,22 +186,12 @@ export class PatientsService {
 
   async updateConsent(id: string, tenantId: string) {
     await this.findById(id, tenantId);
-    await this.patientRepo.update(id, { consentGivenAt: new Date(), consentVersion: '1.0' });
+    await this.db.repo(Patient).update(id, { consentGivenAt: new Date(), consentVersion: '1.0' });
     return this.findById(id, tenantId);
   }
 
-  /**
-   * Returns past consultation history for a patient.
-   * Used by the consultation page sidebar.
-   */
-  async getConsultationHistory(patientId: string, tenantId: string, page = 1, limit = 20) {
-    // We return appointments with consultation data joined.
-    // The Appointment entity is not imported here, so we use a raw approach.
-    // This is resolved via the DataSource from the TypeORM metadata.
-    const skip = (page - 1) * limit;
-
-    // Return empty array gracefully — consultation history is bonus data
-    // (full implementation deferred to ConsultationService.getPatientConsultations)
+  async getConsultationHistory(_patientId: string, _tenantId: string, _page = 1, _limit = 20) {
+    // Full implementation deferred to ConsultationService.getPatientConsultations
     return [];
   }
 }

@@ -3,9 +3,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Department } from '@mediflow/database';
+import { Department, TenantEntityManager } from '@mediflow/database';
 
 export class CreateDepartmentDto {
   name: string;
@@ -40,21 +38,18 @@ const DEFAULT_DEPARTMENTS = [
 
 @Injectable()
 export class DepartmentsService {
-  constructor(
-    @InjectRepository(Department)
-    private departmentRepo: Repository<Department>,
-  ) {}
+  constructor(private readonly db: TenantEntityManager) {}
 
   async create(tenantId: string, dto: CreateDepartmentDto) {
-    const existing = await this.departmentRepo.findOne({
+    const existing = await this.db.repo(Department).findOne({
       where: { tenantId, code: dto.code },
     });
     if (existing) {
       throw new ConflictException(`Department with code '${dto.code}' already exists`);
     }
 
-    const dept = await this.departmentRepo.save(
-      this.departmentRepo.create({
+    return this.db.repo(Department).save(
+      this.db.repo(Department).create({
         tenantId,
         name: dto.name,
         code: dto.code.toUpperCase(),
@@ -65,26 +60,22 @@ export class DepartmentsService {
         isActive: true,
       }),
     );
-
-    return dept;
   }
 
   async findAll(tenantId: string) {
-    const departments = await this.departmentRepo
-      .createQueryBuilder('dept')
+    return this.db
+      .qb(Department, 'dept')
       .loadRelationCountAndMap('dept.doctorCount', 'dept.doctors')
       .where('dept.tenantId = :tenantId', { tenantId })
       .andWhere('dept.isActive = true')
       .orderBy('dept.sortOrder', 'ASC')
       .addOrderBy('dept.name', 'ASC')
       .getMany();
-
-    return departments;
   }
 
   async findById(id: string, tenantId: string) {
-    const dept = await this.departmentRepo
-      .createQueryBuilder('dept')
+    const dept = await this.db
+      .qb(Department, 'dept')
       .loadRelationCountAndMap('dept.doctorCount', 'dept.doctors')
       .where('dept.id = :id', { id })
       .andWhere('dept.tenantId = :tenantId', { tenantId })
@@ -95,10 +86,10 @@ export class DepartmentsService {
   }
 
   async update(id: string, tenantId: string, dto: UpdateDepartmentDto) {
-    const dept = await this.departmentRepo.findOne({ where: { id, tenantId } });
+    const dept = await this.db.repo(Department).findOne({ where: { id, tenantId } });
     if (!dept) throw new NotFoundException('Department not found');
 
-    await this.departmentRepo.update(id, {
+    await this.db.repo(Department).update(id, {
       name: dto.name ?? undefined,
       description: dto.description ?? undefined,
       icon: dto.icon ?? undefined,
@@ -111,9 +102,9 @@ export class DepartmentsService {
   }
 
   async delete(id: string, tenantId: string) {
-    const dept = await this.departmentRepo.findOne({ where: { id, tenantId } });
+    const dept = await this.db.repo(Department).findOne({ where: { id, tenantId } });
     if (!dept) throw new NotFoundException('Department not found');
-    await this.departmentRepo.update(id, { isActive: false });
+    await this.db.repo(Department).update(id, { isActive: false });
     return { deleted: true };
   }
 
@@ -124,7 +115,7 @@ export class DepartmentsService {
       isActive: true,
     }));
 
-    await this.departmentRepo
+    await this.db.repo(Department)
       .createQueryBuilder()
       .insert()
       .into(Department)

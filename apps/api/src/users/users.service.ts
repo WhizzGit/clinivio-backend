@@ -1,10 +1,8 @@
 import {
   Injectable, NotFoundException, ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { User, DoctorProfile, StaffProfile, Role } from '@mediflow/database';
+import { User, DoctorProfile, StaffProfile, Role, TenantEntityManager } from '@mediflow/database';
 
 const STAFF_ROLES: Role[] = [Role.NURSE, Role.RECEPTIONIST, Role.LAB_TECHNICIAN, Role.PHARMACIST];
 
@@ -57,14 +55,7 @@ export class UpdateUserDto {
 
 @Injectable()
 export class UsersService {
-  constructor(
-    @InjectRepository(User)
-    private userRepo: Repository<User>,
-    @InjectRepository(DoctorProfile)
-    private doctorProfileRepo: Repository<DoctorProfile>,
-    @InjectRepository(StaffProfile)
-    private staffProfileRepo: Repository<StaffProfile>,
-  ) {}
+  constructor(private readonly db: TenantEntityManager) {}
 
   async findAll(
     tenantId: string,
@@ -72,8 +63,8 @@ export class UsersService {
     page = 1,
     limit = 50,
   ) {
-    const qb = this.userRepo
-      .createQueryBuilder('user')
+    const qb = this.db
+      .qb(User, 'user')
       .leftJoinAndSelect('user.doctorProfile', 'doctorProfile')
       .leftJoinAndSelect('user.staffProfile', 'staffProfile')
       .leftJoinAndSelect('staffProfile.department', 'staffDept')
@@ -107,7 +98,7 @@ export class UsersService {
   }
 
   async findById(id: string, tenantId: string) {
-    const user = await this.userRepo.findOne({
+    const user = await this.db.repo(User).findOne({
       where: { id, tenantId },
       relations: ['doctorProfile', 'doctorProfile.department', 'staffProfile', 'staffProfile.department'],
     });
@@ -116,18 +107,15 @@ export class UsersService {
   }
 
   async create(tenantId: string, dto: CreateUserDto) {
-    // Check email uniqueness within tenant
-    const existing = await this.userRepo.findOne({
-      where: { tenantId, email: dto.email },
-    });
+    const existing = await this.db.repo(User).findOne({ where: { tenantId, email: dto.email } });
     if (existing) {
       throw new ConflictException(`Email '${dto.email}' is already taken in this organisation`);
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
-    const user = await this.userRepo.save(
-      this.userRepo.create({
+    const user = await this.db.repo(User).save(
+      this.db.repo(User).create({
         tenantId,
         email: dto.email,
         passwordHash,
@@ -139,10 +127,9 @@ export class UsersService {
       }),
     );
 
-    // Create DoctorProfile if role is DOCTOR
     if (dto.role === Role.DOCTOR) {
-      await this.doctorProfileRepo.save(
-        this.doctorProfileRepo.create({
+      await this.db.repo(DoctorProfile).save(
+        this.db.repo(DoctorProfile).create({
           userId: user.id,
           tenantId,
           specialty: dto.specialty ?? null,
@@ -157,10 +144,9 @@ export class UsersService {
       );
     }
 
-    // Create StaffProfile for non-doctor staff roles
     if (STAFF_ROLES.includes(dto.role as Role)) {
-      await this.staffProfileRepo.save(
-        this.staffProfileRepo.create({
+      await this.db.repo(StaffProfile).save(
+        this.db.repo(StaffProfile).create({
           userId: user.id,
           tenantId,
           employeeId: dto.employeeId ?? null,
@@ -183,11 +169,8 @@ export class UsersService {
   async update(id: string, tenantId: string, dto: UpdateUserDto) {
     const user = await this.findById(id, tenantId);
 
-    // Check email uniqueness if changing
     if (dto.email && dto.email !== user.email) {
-      const conflict = await this.userRepo.findOne({
-        where: { tenantId, email: dto.email },
-      });
+      const conflict = await this.db.repo(User).findOne({ where: { tenantId, email: dto.email } });
       if (conflict && conflict.id !== id) {
         throw new ConflictException(`Email '${dto.email}' is already taken`);
       }
@@ -204,48 +187,45 @@ export class UsersService {
     }
 
     if (Object.keys(updateData).length > 0) {
-      await this.userRepo.update(id, updateData);
+      await this.db.repo(User).update(id, updateData);
     }
 
-    // Update doctor profile fields if present
     if (user.role === Role.DOCTOR) {
       const profileUpdate: any = {};
-      if (dto.specialty            !== undefined) profileUpdate.specialty            = dto.specialty;
-      if (dto.subSpecialty         !== undefined) profileUpdate.subSpecialty         = dto.subSpecialty;
-      if (dto.qualification        !== undefined) profileUpdate.qualification        = dto.qualification;
-      if (dto.registrationNo       !== undefined) profileUpdate.registrationNo       = dto.registrationNo;
-      if (dto.consultationFee      !== undefined) profileUpdate.consultationFee      = String(dto.consultationFee);
-      if (dto.experienceYears      !== undefined) profileUpdate.experienceYears      = dto.experienceYears;
-      if (dto.departmentId         !== undefined) profileUpdate.departmentId         = dto.departmentId;
-      if (dto.isAcceptingPatients  !== undefined) profileUpdate.isAcceptingPatients  = dto.isAcceptingPatients;
+      if (dto.specialty           !== undefined) profileUpdate.specialty           = dto.specialty;
+      if (dto.subSpecialty        !== undefined) profileUpdate.subSpecialty        = dto.subSpecialty;
+      if (dto.qualification       !== undefined) profileUpdate.qualification       = dto.qualification;
+      if (dto.registrationNo      !== undefined) profileUpdate.registrationNo      = dto.registrationNo;
+      if (dto.consultationFee     !== undefined) profileUpdate.consultationFee     = String(dto.consultationFee);
+      if (dto.experienceYears     !== undefined) profileUpdate.experienceYears     = dto.experienceYears;
+      if (dto.departmentId        !== undefined) profileUpdate.departmentId        = dto.departmentId;
+      if (dto.isAcceptingPatients !== undefined) profileUpdate.isAcceptingPatients = dto.isAcceptingPatients;
 
       if (Object.keys(profileUpdate).length > 0) {
-        await this.doctorProfileRepo.update({ userId: id }, profileUpdate);
+        await this.db.repo(DoctorProfile).update({ userId: id }, profileUpdate);
       }
     }
 
-    // Update staff profile fields if present
     if (STAFF_ROLES.includes(user.role as Role)) {
       const profileUpdate: any = {};
-      if (dto.employeeId     !== undefined) profileUpdate.employeeId     = dto.employeeId;
-      if (dto.qualification  !== undefined) profileUpdate.qualification  = dto.qualification;
-      if (dto.registrationNo !== undefined) profileUpdate.registrationNo = dto.registrationNo;
-      if (dto.departmentId   !== undefined) profileUpdate.departmentId   = dto.departmentId;
-      if (dto.joiningDate    !== undefined) profileUpdate.joiningDate    = dto.joiningDate;
-      if (dto.shift          !== undefined) profileUpdate.shift          = dto.shift;
+      if (dto.employeeId      !== undefined) profileUpdate.employeeId      = dto.employeeId;
+      if (dto.qualification   !== undefined) profileUpdate.qualification   = dto.qualification;
+      if (dto.registrationNo  !== undefined) profileUpdate.registrationNo  = dto.registrationNo;
+      if (dto.departmentId    !== undefined) profileUpdate.departmentId    = dto.departmentId;
+      if (dto.joiningDate     !== undefined) profileUpdate.joiningDate     = dto.joiningDate;
+      if (dto.shift           !== undefined) profileUpdate.shift           = dto.shift;
       if (dto.experienceYears !== undefined) profileUpdate.experienceYears = dto.experienceYears;
-      if (dto.specialization !== undefined) profileUpdate.specialization  = dto.specialization;
-      if (dto.isActive       !== undefined) profileUpdate.isActive        = dto.isActive;
-      if (dto.metadata       !== undefined) profileUpdate.metadata        = dto.metadata;
+      if (dto.specialization  !== undefined) profileUpdate.specialization  = dto.specialization;
+      if (dto.isActive        !== undefined) profileUpdate.isActive        = dto.isActive;
+      if (dto.metadata        !== undefined) profileUpdate.metadata        = dto.metadata;
 
       if (Object.keys(profileUpdate).length > 0) {
-        // Upsert: create if missing (e.g. for users created before this feature)
-        const existing = await this.staffProfileRepo.findOne({ where: { userId: id } });
+        const existing = await this.db.repo(StaffProfile).findOne({ where: { userId: id } });
         if (existing) {
-          await this.staffProfileRepo.update({ userId: id }, profileUpdate);
+          await this.db.repo(StaffProfile).update({ userId: id }, profileUpdate);
         } else {
-          await this.staffProfileRepo.save(
-            this.staffProfileRepo.create({
+          await this.db.repo(StaffProfile).save(
+            this.db.repo(StaffProfile).create({
               userId: id,
               tenantId: user.tenantId,
               ...profileUpdate,

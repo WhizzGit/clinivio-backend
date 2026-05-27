@@ -4,6 +4,19 @@ import { SubscriptionTier } from '@mediflow/database';
 
 export class CreateTenantDto {
   @ApiProperty() @IsString() @MinLength(2) name: string;
+
+  /**
+   * URL-safe slug used as subdomain and schema name.
+   * If omitted, auto-generated from `name` (lowercased, non-alphanumeric → hyphens).
+   * Example: "hansvl" → hansvl.clinivio.ai / schema tenant_hansvl
+   */
+  @ApiPropertyOptional({ example: 'hansvl' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, {
+    message: 'slug must be 3–63 chars, lowercase alphanumeric and hyphens, no leading/trailing hyphens',
+  })
+  slug?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() address?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() city?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() state?: string;

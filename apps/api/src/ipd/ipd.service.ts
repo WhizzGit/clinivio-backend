@@ -4,8 +4,6 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
 import {
   IPDAdmission,
   IPDVitalSnapshot,
@@ -17,6 +15,7 @@ import {
   Room,
   BedStatus,
   IPDAdmissionStatus,
+  TenantEntityManager,
 } from '@mediflow/database';
 
 export class AdmitPatientDto {
@@ -85,59 +84,29 @@ export class SaveDischargeSummaryDto {
 
 @Injectable()
 export class IpdService {
-  constructor(
-    @InjectRepository(IPDAdmission)
-    private admissionRepo: Repository<IPDAdmission>,
-    @InjectRepository(IPDVitalSnapshot)
-    private vitalRepo: Repository<IPDVitalSnapshot>,
-    @InjectRepository(IPDTreatment)
-    private treatmentRepo: Repository<IPDTreatment>,
-    @InjectRepository(IPDProcedure)
-    private procedureRepo: Repository<IPDProcedure>,
-    @InjectRepository(DischargeAdvice)
-    private dischargeAdviceRepo: Repository<DischargeAdvice>,
-    @InjectRepository(DischargeSummary)
-    private dischargeSummaryRepo: Repository<DischargeSummary>,
-    @InjectRepository(Bed)
-    private bedRepo: Repository<Bed>,
-    @InjectRepository(Room)
-    private roomRepo: Repository<Room>,
-    private dataSource: DataSource,
-  ) {}
+  constructor(private readonly db: TenantEntityManager) {}
 
   private async generateAdmissionNumber(tenantId: string): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await this.admissionRepo.count({ where: { tenantId } });
+    const count = await this.db.repo(IPDAdmission).count({ where: { tenantId } });
     return `IPD-${year}-${String(count + 1).padStart(6, '0')}`;
   }
 
   private async loadAdmission(id: string) {
-    return this.admissionRepo.findOne({
+    return this.db.repo(IPDAdmission).findOne({
       where: { id },
-      relations: [
-        'patient',
-        'attendingDoctor',
-        'room',
-        'bed',
-        'vitalSnapshots',
-        'treatments',
-        'procedures',
-        'dischargeAdvice',
-        'dischargeSummary',
-      ],
+      relations: ['patient', 'attendingDoctor', 'room', 'bed', 'vitalSnapshots', 'treatments', 'procedures', 'dischargeAdvice', 'dischargeSummary'],
     });
   }
 
   async admitPatient(tenantId: string, dto: AdmitPatientDto) {
-    return this.dataSource.transaction(async (manager) => {
-      const admissionRepo = manager.getRepository(IPDAdmission);
-      const bedRepo = manager.getRepository(Bed);
+    return this.db.transaction(async (em) => {
+      const admissionRepo = em.getRepository(IPDAdmission);
+      const bedRepo = em.getRepository(Bed);
 
       const bed = await bedRepo.findOne({ where: { id: dto.bedId, tenantId } });
       if (!bed) throw new NotFoundException('Bed not found');
-      if (bed.status !== BedStatus.AVAILABLE) {
-        throw new ConflictException('Bed is not available');
-      }
+      if (bed.status !== BedStatus.AVAILABLE) throw new ConflictException('Bed is not available');
 
       const admissionNumber = await this.generateAdmissionNumber(tenantId);
 
@@ -161,7 +130,6 @@ export class IpdService {
       );
 
       await bedRepo.update(dto.bedId, { status: BedStatus.OCCUPIED });
-
       return this.loadAdmission(admission.id);
     });
   }
@@ -169,8 +137,8 @@ export class IpdService {
   async findAll(tenantId: string, filters: { status?: IPDAdmissionStatus; patientId?: string }, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
-    const qb = this.admissionRepo
-      .createQueryBuilder('adm')
+    const qb = this.db
+      .qb(IPDAdmission, 'adm')
       .leftJoinAndSelect('adm.patient', 'patient')
       .leftJoinAndSelect('adm.attendingDoctor', 'doctor')
       .leftJoinAndSelect('adm.room', 'room')
@@ -188,38 +156,28 @@ export class IpdService {
 
   async findById(id: string, tenantId: string) {
     const admission = await this.loadAdmission(id);
-    if (!admission || admission.tenantId !== tenantId) {
-      throw new NotFoundException('Admission not found');
-    }
+    if (!admission || admission.tenantId !== tenantId) throw new NotFoundException('Admission not found');
     return admission;
   }
 
   async dischargePatient(id: string, tenantId: string) {
-    return this.dataSource.transaction(async (manager) => {
-      const admissionRepo = manager.getRepository(IPDAdmission);
-      const bedRepo = manager.getRepository(Bed);
+    return this.db.transaction(async (em) => {
+      const admissionRepo = em.getRepository(IPDAdmission);
+      const bedRepo = em.getRepository(Bed);
 
       const admission = await admissionRepo.findOne({ where: { id, tenantId } });
       if (!admission) throw new NotFoundException('Admission not found');
-      if (admission.status === IPDAdmissionStatus.DISCHARGED) {
-        throw new BadRequestException('Patient already discharged');
-      }
+      if (admission.status === IPDAdmissionStatus.DISCHARGED) throw new BadRequestException('Patient already discharged');
 
-      await admissionRepo.update(id, {
-        status: IPDAdmissionStatus.DISCHARGED,
-        dischargedAt: new Date(),
-      });
-
+      await admissionRepo.update(id, { status: IPDAdmissionStatus.DISCHARGED, dischargedAt: new Date() });
       await bedRepo.update(admission.bedId, { status: BedStatus.AVAILABLE });
 
       return this.loadAdmission(id);
     });
   }
 
-  // ─── Vitals ───────────────────────────────────────────────────────────────────
-
   async addVitalSnapshot(admissionId: string, tenantId: string, dto: AddVitalSnapshotDto) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
 
     let bmi: string | undefined;
@@ -228,13 +186,11 @@ export class IpdService {
       bmi = (dto.weightKg / (hM * hM)).toFixed(1);
     }
 
-    const vital = await this.vitalRepo.save(
-      this.vitalRepo.create({
-        tenantId,
-        admissionId,
+    return this.db.repo(IPDVitalSnapshot).save(
+      this.db.repo(IPDVitalSnapshot).create({
+        tenantId, admissionId,
         recordedById: dto.recordedById,
-        bpSystolic: dto.bpSystolic ?? null,
-        bpDiastolic: dto.bpDiastolic ?? null,
+        bpSystolic: dto.bpSystolic ?? null, bpDiastolic: dto.bpDiastolic ?? null,
         pulseRate: dto.pulseRate ?? null,
         temperature: dto.temperature !== undefined ? String(dto.temperature) : null,
         weightKg: dto.weightKg !== undefined ? String(dto.weightKg) : null,
@@ -247,31 +203,21 @@ export class IpdService {
         recordedAt: new Date(),
       }),
     );
-
-    return vital;
   }
 
   async getVitals(admissionId: string, tenantId: string) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
-
-    return this.vitalRepo.find({
-      where: { admissionId },
-      relations: ['recordedBy'],
-      order: { recordedAt: 'DESC' },
-    });
+    return this.db.repo(IPDVitalSnapshot).find({ where: { admissionId }, relations: ['recordedBy'], order: { recordedAt: 'DESC' } });
   }
 
-  // ─── Treatments ───────────────────────────────────────────────────────────────
-
   async addTreatment(admissionId: string, tenantId: string, dto: AddTreatmentDto) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
 
-    return this.treatmentRepo.save(
-      this.treatmentRepo.create({
-        tenantId,
-        admissionId,
+    return this.db.repo(IPDTreatment).save(
+      this.db.repo(IPDTreatment).create({
+        tenantId, admissionId,
         orderedById: dto.orderedById,
         treatmentName: dto.treatmentName,
         instructions: dto.instructions ?? null,
@@ -283,32 +229,25 @@ export class IpdService {
   }
 
   async endTreatment(treatmentId: string, tenantId: string) {
-    const treatment = await this.treatmentRepo.findOne({ where: { id: treatmentId, tenantId } });
+    const treatment = await this.db.repo(IPDTreatment).findOne({ where: { id: treatmentId, tenantId } });
     if (!treatment) throw new NotFoundException('Treatment not found');
-    await this.treatmentRepo.update(treatmentId, { isActive: false, endedAt: new Date() });
-    return this.treatmentRepo.findOne({ where: { id: treatmentId } });
+    await this.db.repo(IPDTreatment).update(treatmentId, { isActive: false, endedAt: new Date() });
+    return this.db.repo(IPDTreatment).findOne({ where: { id: treatmentId } });
   }
 
   async getTreatments(admissionId: string, tenantId: string) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
-    return this.treatmentRepo.find({
-      where: { admissionId },
-      relations: ['orderedBy'],
-      order: { startedAt: 'DESC' },
-    });
+    return this.db.repo(IPDTreatment).find({ where: { admissionId }, relations: ['orderedBy'], order: { startedAt: 'DESC' } });
   }
 
-  // ─── Procedures ───────────────────────────────────────────────────────────────
-
   async addProcedure(admissionId: string, tenantId: string, dto: AddProcedureDto) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
 
-    return this.procedureRepo.save(
-      this.procedureRepo.create({
-        tenantId,
-        admissionId,
+    return this.db.repo(IPDProcedure).save(
+      this.db.repo(IPDProcedure).create({
+        tenantId, admissionId,
         performedById: dto.performedById,
         procedureName: dto.procedureName,
         notes: dto.notes ?? null,
@@ -321,97 +260,69 @@ export class IpdService {
   }
 
   async addProcedurePhotos(procedureId: string, tenantId: string, photoUrls: string[]) {
-    const procedure = await this.procedureRepo.findOne({ where: { id: procedureId, tenantId } });
+    const procedure = await this.db.repo(IPDProcedure).findOne({ where: { id: procedureId, tenantId } });
     if (!procedure) throw new NotFoundException('Procedure not found');
-
     const updatedUrls = [...(procedure.photoUrls ?? []), ...photoUrls];
-    await this.procedureRepo.update(procedureId, { photoUrls: updatedUrls });
-    return this.procedureRepo.findOne({ where: { id: procedureId } });
+    await this.db.repo(IPDProcedure).update(procedureId, { photoUrls: updatedUrls });
+    return this.db.repo(IPDProcedure).findOne({ where: { id: procedureId } });
   }
 
   async getProcedures(admissionId: string, tenantId: string) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
-    return this.procedureRepo.find({
-      where: { admissionId },
-      relations: ['performedBy'],
-      order: { performedAt: 'DESC' },
-    });
+    return this.db.repo(IPDProcedure).find({ where: { admissionId }, relations: ['performedBy'], order: { performedAt: 'DESC' } });
   }
 
-  // ─── Discharge Advice ─────────────────────────────────────────────────────────
-
   async saveDischargeAdvice(admissionId: string, tenantId: string, dto: SaveDischargeAdviceDto) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
 
-    let advice = await this.dischargeAdviceRepo.findOne({ where: { admissionId } });
+    let advice = await this.db.repo(DischargeAdvice).findOne({ where: { admissionId } });
+
+    const adviceData = {
+      createdById: dto.createdById,
+      medications: dto.medications ?? null,
+      dietAdvice: dto.dietAdvice ?? null,
+      activityAdvice: dto.activityAdvice ?? null,
+      woundCare: dto.woundCare ?? null,
+      otherAdvice: dto.otherAdvice ?? null,
+      followUpDate: dto.followUpDate ?? null,
+      followUpNotes: dto.followUpNotes ?? null,
+    };
 
     if (advice) {
-      await this.dischargeAdviceRepo.update(advice.id, {
-        createdById: dto.createdById,
-        medications: dto.medications ?? null,
-        dietAdvice: dto.dietAdvice ?? null,
-        activityAdvice: dto.activityAdvice ?? null,
-        woundCare: dto.woundCare ?? null,
-        otherAdvice: dto.otherAdvice ?? null,
-        followUpDate: dto.followUpDate ?? null,
-        followUpNotes: dto.followUpNotes ?? null,
-      });
-      return this.dischargeAdviceRepo.findOne({ where: { id: advice.id } });
+      await this.db.repo(DischargeAdvice).update(advice.id, adviceData);
+      return this.db.repo(DischargeAdvice).findOne({ where: { id: advice.id } });
     } else {
-      return this.dischargeAdviceRepo.save(
-        this.dischargeAdviceRepo.create({
-          tenantId,
-          admissionId,
-          createdById: dto.createdById,
-          medications: dto.medications ?? null,
-          dietAdvice: dto.dietAdvice ?? null,
-          activityAdvice: dto.activityAdvice ?? null,
-          woundCare: dto.woundCare ?? null,
-          otherAdvice: dto.otherAdvice ?? null,
-          followUpDate: dto.followUpDate ?? null,
-          followUpNotes: dto.followUpNotes ?? null,
-        }),
+      return this.db.repo(DischargeAdvice).save(
+        this.db.repo(DischargeAdvice).create({ tenantId, admissionId, ...adviceData }),
       );
     }
   }
 
-  // ─── Discharge Summary ────────────────────────────────────────────────────────
-
   async saveDischargeSummary(admissionId: string, tenantId: string, dto: SaveDischargeSummaryDto) {
-    const admission = await this.admissionRepo.findOne({ where: { id: admissionId, tenantId } });
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id: admissionId, tenantId } });
     if (!admission) throw new NotFoundException('Admission not found');
 
-    let summary = await this.dischargeSummaryRepo.findOne({ where: { admissionId } });
+    let summary = await this.db.repo(DischargeSummary).findOne({ where: { admissionId } });
+
+    const summaryData = {
+      generatedById: dto.generatedById,
+      finalDiagnosis: dto.finalDiagnosis,
+      presentingComplaints: dto.presentingComplaints,
+      treatmentSummary: dto.treatmentSummary,
+      proceduresDone: dto.proceduresDone ?? null,
+      investigationFindings: dto.investigationFindings ?? null,
+      conditionAtDischarge: dto.conditionAtDischarge,
+      pdfS3Key: dto.pdfS3Key ?? null,
+    };
 
     if (summary) {
-      await this.dischargeSummaryRepo.update(summary.id, {
-        generatedById: dto.generatedById,
-        finalDiagnosis: dto.finalDiagnosis,
-        presentingComplaints: dto.presentingComplaints,
-        treatmentSummary: dto.treatmentSummary,
-        proceduresDone: dto.proceduresDone ?? null,
-        investigationFindings: dto.investigationFindings ?? null,
-        conditionAtDischarge: dto.conditionAtDischarge,
-        pdfS3Key: dto.pdfS3Key ?? null,
-      });
-      return this.dischargeSummaryRepo.findOne({ where: { id: summary.id } });
+      await this.db.repo(DischargeSummary).update(summary.id, summaryData);
+      return this.db.repo(DischargeSummary).findOne({ where: { id: summary.id } });
     } else {
-      return this.dischargeSummaryRepo.save(
-        this.dischargeSummaryRepo.create({
-          tenantId,
-          admissionId,
-          generatedById: dto.generatedById,
-          finalDiagnosis: dto.finalDiagnosis,
-          presentingComplaints: dto.presentingComplaints,
-          treatmentSummary: dto.treatmentSummary,
-          proceduresDone: dto.proceduresDone ?? null,
-          investigationFindings: dto.investigationFindings ?? null,
-          conditionAtDischarge: dto.conditionAtDischarge,
-          pdfS3Key: dto.pdfS3Key ?? null,
-          generatedAt: new Date(),
-        }),
+      return this.db.repo(DischargeSummary).save(
+        this.db.repo(DischargeSummary).create({ tenantId, admissionId, ...summaryData, generatedAt: new Date() }),
       );
     }
   }

@@ -1,10 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
-import { NotificationLog, NotificationStatus } from '@mediflow/database';
+import { NotificationLog, NotificationStatus, TenantDataSourceRegistry } from '@mediflow/database';
 import axios from 'axios';
 
 @Injectable()
@@ -15,8 +13,7 @@ export class WhatsappService {
 
   constructor(
     private configService: ConfigService,
-    @InjectRepository(NotificationLog)
-    private notificationLogRepo: Repository<NotificationLog>,
+    private readonly registry: TenantDataSourceRegistry,
     @InjectQueue('notifications')
     private notificationsQueue: Queue,
   ) {
@@ -153,28 +150,39 @@ export class WhatsappService {
     }
 
     try {
-      const log = await this.notificationLogRepo
-        .createQueryBuilder('log')
-        .where('log.wamid = :wamid', { wamid })
-        .getOne();
+      // WhatsApp webhooks carry no tenant context — search all registered tenant
+      // DataSources for the notification log identified by its wamid.
+      const allDs = this.registry.getAll();
+      let found = false;
 
-      if (!log) {
+      for (const ds of allDs) {
+        const log = await ds
+          .getRepository(NotificationLog)
+          .createQueryBuilder('log')
+          .where('log.wamid = :wamid', { wamid })
+          .getOne();
+
+        if (!log) continue;
+        found = true;
+
+        const updateData: Partial<NotificationLog> = { status: newStatus };
+        const ts = new Date(parseInt(timestamp, 10) * 1000);
+
+        if (newStatus === NotificationStatus.SENT) updateData.sentAt = ts;
+        else if (newStatus === NotificationStatus.DELIVERED) updateData.deliveredAt = ts;
+        else if (newStatus === NotificationStatus.READ) updateData.readAt = ts;
+        else if (newStatus === NotificationStatus.FAILED) {
+          updateData.failureReason = status.errors?.[0]?.message ?? 'Unknown error';
+        }
+
+        await ds.getRepository(NotificationLog).update(log.id, updateData);
+        this.logger.debug(`Updated notification log ${log.id} to status ${newStatus}`);
+        break;
+      }
+
+      if (!found) {
         this.logger.debug(`No notification log found for wamid: ${wamid}`);
-        return;
       }
-
-      const updateData: Partial<NotificationLog> = { status: newStatus };
-      const ts = new Date(parseInt(timestamp, 10) * 1000);
-
-      if (newStatus === NotificationStatus.SENT) updateData.sentAt = ts;
-      else if (newStatus === NotificationStatus.DELIVERED) updateData.deliveredAt = ts;
-      else if (newStatus === NotificationStatus.READ) updateData.readAt = ts;
-      else if (newStatus === NotificationStatus.FAILED) {
-        updateData.failureReason = status.errors?.[0]?.message ?? 'Unknown error';
-      }
-
-      await this.notificationLogRepo.update(log.id, updateData);
-      this.logger.debug(`Updated notification log ${log.id} to status ${newStatus}`);
     } catch (err: any) {
       this.logger.error(`Failed to process status update for wamid ${wamid}: ${err.message}`);
     }

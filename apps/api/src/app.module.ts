@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { TenantContextMiddleware } from './middleware/tenant-context.middleware';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -127,4 +128,10 @@ import { StatsModule } from './stats/stats.module';
     StatsModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Apply tenant-context middleware to ALL routes.
+    // Routes without a recognised tenant slug simply get no ALS context (no-op).
+    consumer.apply(TenantContextMiddleware).forRoutes('*');
+  }
+}

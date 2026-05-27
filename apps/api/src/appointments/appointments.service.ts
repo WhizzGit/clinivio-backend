@@ -4,8 +4,6 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import {
   Appointment,
@@ -15,6 +13,8 @@ import {
   AppointmentType,
   PaymentStatus,
   PharmacyOrderStatus,
+  TenantEntityManager,
+  In,
 } from '@mediflow/database';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
 import { KAFKA_TOPICS } from '@mediflow/shared';
@@ -23,28 +23,20 @@ import { CreateAppointmentDto } from './dto/create-appointment.dto';
 @Injectable()
 export class AppointmentsService {
   constructor(
-    @InjectRepository(Appointment)
-    private appointmentRepo: Repository<Appointment>,
-    @InjectRepository(DoctorSlot)
-    private slotRepo: Repository<DoctorSlot>,
-    @InjectRepository(PharmacyOrder)
-    private pharmacyOrderRepo: Repository<PharmacyOrder>,
-    private dataSource: DataSource,
+    private readonly db: TenantEntityManager,
     private kafka: KafkaProducerService,
   ) {}
 
   async create(tenantId: string, dto: CreateAppointmentDto) {
-    return this.dataSource.transaction(async (manager) => {
-      const apptRepo = manager.getRepository(Appointment);
-      const slotRepo = manager.getRepository(DoctorSlot);
+    return this.db.transaction(async (em) => {
+      const apptRepo = em.getRepository(Appointment);
+      const slotRepo = em.getRepository(DoctorSlot);
 
       let tokenNumber: number | null = null;
       let scheduledAt: Date | null = dto.scheduledAt ? new Date(dto.scheduledAt) : null;
 
       if (dto.slotId) {
-        const slot = await slotRepo.findOne({
-          where: { id: dto.slotId, tenantId },
-        });
+        const slot = await slotRepo.findOne({ where: { id: dto.slotId, tenantId } });
         if (!slot) throw new NotFoundException('Slot not found');
         if (slot.isBlocked) throw new BadRequestException('Slot is blocked');
         if (slot.bookedCount >= slot.maxPatients) {
@@ -110,15 +102,13 @@ export class AppointmentsService {
     amount: number,
     razorpayPaymentId?: string,
   ) {
-    const appointment = await this.appointmentRepo.findOne({
-      where: { id, tenantId },
-    });
+    const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException('Appointment not found');
     if (appointment.status === AppointmentStatus.CANCELLED) {
       throw new BadRequestException('Cannot confirm payment for cancelled appointment');
     }
 
-    await this.appointmentRepo.update(id, {
+    await this.db.repo(Appointment).update(id, {
       paymentStatus: PaymentStatus.PAID,
       paymentAmount: String(amount),
       razorpayPaymentId: razorpayPaymentId ?? null,
@@ -126,7 +116,7 @@ export class AppointmentsService {
       confirmedAt: new Date(),
     });
 
-    return this.appointmentRepo.findOne({
+    return this.db.repo(Appointment).findOne({
       where: { id },
       relations: ['patient', 'doctor', 'slot', 'department'],
     });
@@ -139,22 +129,17 @@ export class AppointmentsService {
     const endOfDay = new Date(today);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const qb = this.appointmentRepo
-      .createQueryBuilder('appt')
+    const qb = this.db
+      .qb(Appointment, 'appt')
       .leftJoinAndSelect('appt.patient', 'patient')
       .leftJoinAndSelect('appt.doctor', 'doctor')
       .leftJoinAndSelect('appt.slot', 'slot')
       .leftJoinAndSelect('appt.department', 'department')
       .where('appt.tenantId = :tenantId', { tenantId });
 
-    if (filters.doctorId) {
-      qb.andWhere('appt.doctorId = :doctorId', { doctorId: filters.doctorId });
-    }
-    if (filters.departmentId) {
-      qb.andWhere('appt.departmentId = :departmentId', { departmentId: filters.departmentId });
-    }
+    if (filters.doctorId) qb.andWhere('appt.doctorId = :doctorId', { doctorId: filters.doctorId });
+    if (filters.departmentId) qb.andWhere('appt.departmentId = :departmentId', { departmentId: filters.departmentId });
 
-    // Pre-payment statuses: only today's registrations; active statuses: show all
     const prePay = [AppointmentStatus.REGISTERED];
     const active = [
       AppointmentStatus.CONFIRMED,
@@ -173,28 +158,19 @@ export class AppointmentsService {
       { prePay, active, startOfDay, endOfDay },
     );
 
-    qb.orderBy('appt.tokenNumber', 'ASC').addOrderBy('appt.createdAt', 'ASC');
-
-    return qb.getMany();
+    return qb.orderBy('appt.tokenNumber', 'ASC').addOrderBy('appt.createdAt', 'ASC').getMany();
   }
 
   async findAll(
     tenantId: string,
-    filters: {
-      doctorId?: string;
-      departmentId?: string;
-      patientId?: string;
-      status?: AppointmentStatus;
-      from?: string;
-      to?: string;
-    },
+    filters: { doctorId?: string; departmentId?: string; patientId?: string; status?: AppointmentStatus; from?: string; to?: string },
     page = 1,
     limit = 20,
   ) {
     const skip = (page - 1) * limit;
 
-    const qb = this.appointmentRepo
-      .createQueryBuilder('appt')
+    const qb = this.db
+      .qb(Appointment, 'appt')
       .leftJoinAndSelect('appt.patient', 'patient')
       .leftJoinAndSelect('appt.doctor', 'doctor')
       .leftJoinAndSelect('appt.slot', 'slot')
@@ -205,36 +181,22 @@ export class AppointmentsService {
     if (filters.departmentId) qb.andWhere('appt.departmentId = :departmentId', { departmentId: filters.departmentId });
     if (filters.patientId) qb.andWhere('appt.patientId = :patientId', { patientId: filters.patientId });
     if (filters.status) qb.andWhere('appt.status = :status', { status: filters.status });
-    if (filters.from) {
-      qb.andWhere('appt.createdAt >= :from', { from: new Date(filters.from) });
-    }
-    if (filters.to) {
-      qb.andWhere('appt.createdAt <= :to', { to: new Date(filters.to) });
-    }
+    if (filters.from) qb.andWhere('appt.createdAt >= :from', { from: new Date(filters.from) });
+    if (filters.to) qb.andWhere('appt.createdAt <= :to', { to: new Date(filters.to) });
 
     qb.orderBy('appt.createdAt', 'DESC').skip(skip).take(limit);
 
     const [data, total] = await qb.getManyAndCount();
-
-    return {
-      data,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    };
+    return { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
   async findById(id: string, tenantId: string) {
-    const appointment = await this.appointmentRepo.findOne({
+    const appointment = await this.db.repo(Appointment).findOne({
       where: { id, tenantId },
       relations: [
-        'patient',
-        'doctor',
-        'slot',
-        'department',
-        'consultation',
-        'consultation.prescriptions',
-        'consultation.prescriptions.items',
-        'consultation.followUps',
-        'pharmacyOrder',
+        'patient', 'doctor', 'slot', 'department',
+        'consultation', 'consultation.prescriptions', 'consultation.prescriptions.items',
+        'consultation.followUps', 'pharmacyOrder',
       ],
     });
     if (!appointment) throw new NotFoundException('Appointment not found');
@@ -248,14 +210,10 @@ export class AppointmentsService {
     const endOfDay = new Date(target);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const activeStatuses = [
-      AppointmentStatus.CONFIRMED,
-      AppointmentStatus.CHECKED_IN,
-      AppointmentStatus.IN_PROGRESS,
-    ];
+    const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];
 
-    const qb = this.appointmentRepo
-      .createQueryBuilder('appt')
+    return this.db
+      .qb(Appointment, 'appt')
       .leftJoinAndSelect('appt.patient', 'patient')
       .leftJoinAndSelect('appt.slot', 'slot')
       .where('appt.tenantId = :tenantId', { tenantId })
@@ -266,60 +224,40 @@ export class AppointmentsService {
           OR
           (appt.status = :completed AND appt.completedAt BETWEEN :startOfDay AND :endOfDay)
         )`,
-        {
-          activeStatuses,
-          completed: AppointmentStatus.COMPLETED,
-          startOfDay,
-          endOfDay,
-        },
+        { activeStatuses, completed: AppointmentStatus.COMPLETED, startOfDay, endOfDay },
       )
       .orderBy('appt.tokenNumber', 'ASC')
-      .addOrderBy('appt.createdAt', 'ASC');
-
-    return qb.getMany();
+      .addOrderBy('appt.createdAt', 'ASC')
+      .getMany();
   }
 
   async checkIn(id: string, tenantId: string) {
-    const appointment = await this.appointmentRepo.findOne({ where: { id, tenantId } });
+    const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException('Appointment not found');
     if (appointment.status !== AppointmentStatus.CONFIRMED) {
       throw new BadRequestException('Appointment must be CONFIRMED to check in');
     }
-    await this.appointmentRepo.update(id, {
-      status: AppointmentStatus.CHECKED_IN,
-      checkedInAt: new Date(),
-    });
-    return this.appointmentRepo.findOne({
-      where: { id },
-      relations: ['patient', 'doctor', 'slot', 'department'],
-    });
+    await this.db.repo(Appointment).update(id, { status: AppointmentStatus.CHECKED_IN, checkedInAt: new Date() });
+    return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
   }
 
   async startConsultation(id: string, tenantId: string) {
-    const appointment = await this.appointmentRepo.findOne({ where: { id, tenantId } });
+    const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException('Appointment not found');
     if (appointment.status !== AppointmentStatus.CHECKED_IN) {
       throw new BadRequestException('Appointment must be CHECKED_IN to start consultation');
     }
-    await this.appointmentRepo.update(id, {
-      status: AppointmentStatus.IN_PROGRESS,
-    });
-    return this.appointmentRepo.findOne({
-      where: { id },
-      relations: ['patient', 'doctor', 'slot', 'department'],
-    });
+    await this.db.repo(Appointment).update(id, { status: AppointmentStatus.IN_PROGRESS });
+    return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
   }
 
   async complete(id: string, tenantId: string) {
-    const appointment = await this.appointmentRepo.findOne({ where: { id, tenantId } });
+    const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException('Appointment not found');
     if (appointment.status !== AppointmentStatus.IN_PROGRESS) {
       throw new BadRequestException('Appointment must be IN_PROGRESS to complete');
     }
-    await this.appointmentRepo.update(id, {
-      status: AppointmentStatus.COMPLETED,
-      completedAt: new Date(),
-    });
+    await this.db.repo(Appointment).update(id, { status: AppointmentStatus.COMPLETED, completedAt: new Date() });
 
     await this.kafka.emit(KAFKA_TOPICS.APPOINTMENT_COMPLETED, {
       eventId: uuidv4(),
@@ -327,24 +265,19 @@ export class AppointmentsService {
       tenantId,
       timestamp: new Date().toISOString(),
       data: {
-        appointmentId: id,
-        tenantId,
-        patientId: appointment.patientId,
-        doctorId: appointment.doctorId,
+        appointmentId: id, tenantId,
+        patientId: appointment.patientId, doctorId: appointment.doctorId,
         completedAt: new Date().toISOString(),
       },
     });
 
-    return this.appointmentRepo.findOne({
-      where: { id },
-      relations: ['patient', 'doctor', 'slot', 'department'],
-    });
+    return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
   }
 
   async sendToPharmacy(id: string, tenantId: string) {
-    return this.dataSource.transaction(async (manager) => {
-      const apptRepo = manager.getRepository(Appointment);
-      const pharmacyRepo = manager.getRepository(PharmacyOrder);
+    return this.db.transaction(async (em) => {
+      const apptRepo = em.getRepository(Appointment);
+      const pharmacyRepo = em.getRepository(PharmacyOrder);
 
       const appointment = await apptRepo.findOne({ where: { id, tenantId } });
       if (!appointment) throw new NotFoundException('Appointment not found');
@@ -364,10 +297,7 @@ export class AppointmentsService {
         }),
       );
 
-      await apptRepo.update(id, {
-        status: AppointmentStatus.SENT_TO_PHARMACY,
-        pharmacySentAt: new Date(),
-      });
+      await apptRepo.update(id, { status: AppointmentStatus.SENT_TO_PHARMACY, pharmacySentAt: new Date() });
 
       return apptRepo.findOne({
         where: { id },
@@ -377,20 +307,20 @@ export class AppointmentsService {
   }
 
   async cancel(id: string, tenantId: string, reason: string) {
-    const appointment = await this.appointmentRepo.findOne({ where: { id, tenantId } });
+    const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException('Appointment not found');
     if (appointment.status === AppointmentStatus.CANCELLED) {
       throw new BadRequestException('Appointment is already cancelled');
     }
 
-    await this.appointmentRepo.update(id, {
+    await this.db.repo(Appointment).update(id, {
       status: AppointmentStatus.CANCELLED,
       cancellationReason: reason,
       cancelledAt: new Date(),
     });
 
     if (appointment.slotId) {
-      await this.slotRepo.decrement({ id: appointment.slotId }, 'bookedCount', 1);
+      await this.db.repo(DoctorSlot).decrement({ id: appointment.slotId }, 'bookedCount', 1);
     }
 
     await this.kafka.emit(KAFKA_TOPICS.APPOINTMENT_CANCELLED, {
@@ -399,19 +329,13 @@ export class AppointmentsService {
       tenantId,
       timestamp: new Date().toISOString(),
       data: {
-        appointmentId: id,
-        tenantId,
-        patientId: appointment.patientId,
-        doctorId: appointment.doctorId,
-        cancelledAt: new Date().toISOString(),
-        reason,
+        appointmentId: id, tenantId,
+        patientId: appointment.patientId, doctorId: appointment.doctorId,
+        cancelledAt: new Date().toISOString(), reason,
       },
     });
 
-    return this.appointmentRepo.findOne({
-      where: { id },
-      relations: ['patient', 'doctor', 'slot', 'department'],
-    });
+    return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
   }
 
   async getQueueStatus(doctorId: string, tenantId: string) {
@@ -422,19 +346,17 @@ export class AppointmentsService {
     endOfDay.setHours(23, 59, 59, 999);
 
     const [inProgress, waiting, completedToday] = await Promise.all([
-      this.appointmentRepo.findOne({
+      this.db.repo(Appointment).findOne({
         where: { tenantId, doctorId, status: AppointmentStatus.IN_PROGRESS },
         relations: ['patient'],
       }),
-      this.appointmentRepo.count({
+      this.db.repo(Appointment).count({
         where: {
-          tenantId,
-          doctorId,
+          tenantId, doctorId,
           status: In([AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN]),
         },
       }),
-      this.appointmentRepo
-        .createQueryBuilder('appt')
+      this.db.qb(Appointment, 'appt')
         .where('appt.tenantId = :tenantId', { tenantId })
         .andWhere('appt.doctorId = :doctorId', { doctorId })
         .andWhere('appt.status = :status', { status: AppointmentStatus.COMPLETED })

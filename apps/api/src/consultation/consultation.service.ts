@@ -3,8 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import {
   Consultation,
@@ -13,6 +11,7 @@ import {
   FollowUp,
   Appointment,
   AppointmentStatus,
+  TenantEntityManager,
 } from '@mediflow/database';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
 import { KAFKA_TOPICS } from '@mediflow/shared';
@@ -59,39 +58,30 @@ export class CreateFollowUpDto {
 @Injectable()
 export class ConsultationService {
   constructor(
-    @InjectRepository(Consultation)
-    private consultationRepo: Repository<Consultation>,
-    @InjectRepository(Prescription)
-    private prescriptionRepo: Repository<Prescription>,
-    @InjectRepository(PrescriptionItem)
-    private prescriptionItemRepo: Repository<PrescriptionItem>,
-    @InjectRepository(FollowUp)
-    private followUpRepo: Repository<FollowUp>,
-    @InjectRepository(Appointment)
-    private appointmentRepo: Repository<Appointment>,
+    private readonly db: TenantEntityManager,
     private kafka: KafkaProducerService,
   ) {}
 
   private async loadConsultation(id: string) {
-    return this.consultationRepo.findOne({
+    return this.db.repo(Consultation).findOne({
       where: { id },
       relations: ['prescriptions', 'prescriptions.items', 'followUps', 'patient', 'doctor'],
     });
   }
 
   async getOrCreate(appointmentId: string, tenantId: string) {
-    const appointment = await this.appointmentRepo.findOne({
+    const appointment = await this.db.repo(Appointment).findOne({
       where: { id: appointmentId, tenantId },
     });
     if (!appointment) throw new NotFoundException('Appointment not found');
 
-    let consultation = await this.consultationRepo.findOne({
+    let consultation = await this.db.repo(Consultation).findOne({
       where: { appointmentId },
     });
 
     if (!consultation) {
-      consultation = await this.consultationRepo.save(
-        this.consultationRepo.create({
+      consultation = await this.db.repo(Consultation).save(
+        this.db.repo(Consultation).create({
           tenantId,
           appointmentId,
           doctorId: appointment.doctorId,
@@ -105,18 +95,16 @@ export class ConsultationService {
   }
 
   async saveConsultation(appointmentId: string, tenantId: string, dto: SaveConsultationDto) {
-    const appointment = await this.appointmentRepo.findOne({
+    const appointment = await this.db.repo(Appointment).findOne({
       where: { id: appointmentId, tenantId },
     });
     if (!appointment) throw new NotFoundException('Appointment not found');
 
-    let consultation = await this.consultationRepo.findOne({
-      where: { appointmentId },
-    });
+    let consultation = await this.db.repo(Consultation).findOne({ where: { appointmentId } });
 
     if (!consultation) {
-      consultation = await this.consultationRepo.save(
-        this.consultationRepo.create({
+      consultation = await this.db.repo(Consultation).save(
+        this.db.repo(Consultation).create({
           tenantId,
           appointmentId,
           doctorId: appointment.doctorId,
@@ -126,14 +114,13 @@ export class ConsultationService {
       );
     }
 
-    // Compute BMI if height and weight provided
     let bmi: number | undefined;
     if (dto.vitals?.weightKg && dto.vitals?.heightCm) {
       const hM = dto.vitals.heightCm / 100;
       bmi = dto.vitals.weightKg / (hM * hM);
     }
 
-    await this.consultationRepo.update(consultation.id, {
+    await this.db.repo(Consultation).update(consultation.id, {
       bpSystolic: dto.vitals?.bpSystolic ?? undefined,
       bpDiastolic: dto.vitals?.bpDiastolic ?? undefined,
       pulseRate: dto.vitals?.pulseRate ?? undefined,
@@ -168,13 +155,11 @@ export class ConsultationService {
   }
 
   async createPrescription(appointmentId: string, tenantId: string, dto: CreatePrescriptionDto) {
-    const consultation = await this.consultationRepo.findOne({
-      where: { appointmentId },
-    });
+    const consultation = await this.db.repo(Consultation).findOne({ where: { appointmentId } });
     if (!consultation) throw new NotFoundException('Consultation not found. Start consultation first.');
 
-    const prescription = await this.prescriptionRepo.save(
-      this.prescriptionRepo.create({
+    const prescription = await this.db.repo(Prescription).save(
+      this.db.repo(Prescription).create({
         tenantId,
         consultationId: consultation.id,
         patientId: consultation.patientId,
@@ -185,7 +170,7 @@ export class ConsultationService {
 
     if (dto.items?.length) {
       const items = dto.items.map((item) =>
-        this.prescriptionItemRepo.create({
+        this.db.repo(PrescriptionItem).create({
           prescriptionId: prescription.id,
           medicineName: item.medicineName,
           genericName: item.genericName ?? null,
@@ -197,7 +182,7 @@ export class ConsultationService {
           isSubstitutable: item.isSubstitutable ?? true,
         }),
       );
-      await this.prescriptionItemRepo.save(items);
+      await this.db.repo(PrescriptionItem).save(items);
     }
 
     await this.kafka.emit(KAFKA_TOPICS.PRESCRIPTION_CREATED, {
@@ -214,28 +199,24 @@ export class ConsultationService {
       },
     });
 
-    return this.prescriptionRepo.findOne({
+    return this.db.repo(Prescription).findOne({
       where: { id: prescription.id },
       relations: ['items'],
     });
   }
 
   async updatePrescription(prescriptionId: string, tenantId: string, dto: CreatePrescriptionDto) {
-    const prescription = await this.prescriptionRepo.findOne({
+    const prescription = await this.db.repo(Prescription).findOne({
       where: { id: prescriptionId, tenantId },
     });
     if (!prescription) throw new NotFoundException('Prescription not found');
 
-    await this.prescriptionRepo.update(prescriptionId, {
-      notes: dto.notes ?? undefined,
-    });
-
-    // Replace items
-    await this.prescriptionItemRepo.delete({ prescriptionId });
+    await this.db.repo(Prescription).update(prescriptionId, { notes: dto.notes ?? undefined });
+    await this.db.repo(PrescriptionItem).delete({ prescriptionId });
 
     if (dto.items?.length) {
       const items = dto.items.map((item) =>
-        this.prescriptionItemRepo.create({
+        this.db.repo(PrescriptionItem).create({
           prescriptionId,
           medicineName: item.medicineName,
           genericName: item.genericName ?? null,
@@ -247,23 +228,21 @@ export class ConsultationService {
           isSubstitutable: item.isSubstitutable ?? true,
         }),
       );
-      await this.prescriptionItemRepo.save(items);
+      await this.db.repo(PrescriptionItem).save(items);
     }
 
-    return this.prescriptionRepo.findOne({
+    return this.db.repo(Prescription).findOne({
       where: { id: prescriptionId },
       relations: ['items'],
     });
   }
 
   async createFollowUp(appointmentId: string, tenantId: string, dto: CreateFollowUpDto) {
-    const consultation = await this.consultationRepo.findOne({
-      where: { appointmentId },
-    });
+    const consultation = await this.db.repo(Consultation).findOne({ where: { appointmentId } });
     if (!consultation) throw new NotFoundException('Consultation not found');
 
-    const followUp = await this.followUpRepo.save(
-      this.followUpRepo.create({
+    return this.db.repo(FollowUp).save(
+      this.db.repo(FollowUp).create({
         tenantId,
         consultationId: consultation.id,
         patientId: consultation.patientId,
@@ -273,21 +252,17 @@ export class ConsultationService {
         isCompleted: false,
       }),
     );
-
-    return followUp;
   }
 
   async completeFollowUp(followUpId: string, tenantId: string) {
-    const followUp = await this.followUpRepo.findOne({
-      where: { id: followUpId, tenantId },
-    });
+    const followUp = await this.db.repo(FollowUp).findOne({ where: { id: followUpId, tenantId } });
     if (!followUp) throw new NotFoundException('Follow-up not found');
-    await this.followUpRepo.update(followUpId, { isCompleted: true });
-    return this.followUpRepo.findOne({ where: { id: followUpId } });
+    await this.db.repo(FollowUp).update(followUpId, { isCompleted: true });
+    return this.db.repo(FollowUp).findOne({ where: { id: followUpId } });
   }
 
   async getConsultationByAppointment(appointmentId: string, tenantId: string) {
-    const consultation = await this.consultationRepo.findOne({
+    const consultation = await this.db.repo(Consultation).findOne({
       where: { appointmentId },
       relations: ['prescriptions', 'prescriptions.items', 'followUps', 'patient', 'doctor'],
     });
@@ -298,7 +273,7 @@ export class ConsultationService {
 
   async getPatientConsultations(patientId: string, tenantId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const [data, total] = await this.consultationRepo.findAndCount({
+    const [data, total] = await this.db.repo(Consultation).findAndCount({
       where: { patientId, tenantId },
       relations: ['prescriptions', 'prescriptions.items', 'followUps'],
       order: { createdAt: 'DESC' },

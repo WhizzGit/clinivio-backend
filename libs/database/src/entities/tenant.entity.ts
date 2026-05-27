@@ -12,6 +12,14 @@ export class Tenant {
   @Column()
   name: string;
 
+  /**
+   * URL-safe slug — uniquely identifies the tenant in subdomains and schema names.
+   * e.g. "hansvl" → subdomain hansvl.clinivio.ai, schema tenant_hansvl
+   * Auto-generated from name if not provided; must be lowercase alphanumeric + hyphens.
+   */
+  @Column({ unique: true })
+  slug: string;
+
   @Column({ nullable: true })
   address: string | null;
 

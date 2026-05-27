@@ -4,8 +4,6 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
 import {
   LabTest,
   LabOrder,
@@ -14,6 +12,8 @@ import {
   LabOrderStatus,
   LabResultFlag,
   PaymentStatus,
+  TenantEntityManager,
+  ILike,
 } from '@mediflow/database';
 
 export class CreateLabTestDto {
@@ -46,42 +46,27 @@ export class UpdateLabOrderItemDto {
 
 @Injectable()
 export class LabService {
-  constructor(
-    @InjectRepository(LabTest)
-    private labTestRepo: Repository<LabTest>,
-    @InjectRepository(LabOrder)
-    private labOrderRepo: Repository<LabOrder>,
-    @InjectRepository(LabOrderItem)
-    private labOrderItemRepo: Repository<LabOrderItem>,
-    @InjectRepository(Invoice)
-    private invoiceRepo: Repository<Invoice>,
-  ) {}
+  constructor(private readonly db: TenantEntityManager) {}
 
   private async generateOrderNumber(tenantId: string): Promise<string> {
     const year = new Date().getFullYear();
-    const count = await this.labOrderRepo.count({ where: { tenantId } });
+    const count = await this.db.repo(LabOrder).count({ where: { tenantId } });
     return `LAB-${year}-${String(count + 1).padStart(6, '0')}`;
   }
 
   private async loadOrder(id: string) {
-    return this.labOrderRepo.findOne({
+    return this.db.repo(LabOrder).findOne({
       where: { id },
       relations: ['patient', 'orderedBy', 'assignedTo', 'items', 'items.labTest'],
     });
   }
 
-  // ─── Lab Tests (Catalog) ──────────────────────────────────────────────────────
-
   async createTest(tenantId: string, dto: CreateLabTestDto) {
-    const existing = await this.labTestRepo.findOne({
-      where: { tenantId, code: dto.code },
-    });
-    if (existing) {
-      throw new ConflictException(`Lab test with code '${dto.code}' already exists`);
-    }
+    const existing = await this.db.repo(LabTest).findOne({ where: { tenantId, code: dto.code } });
+    if (existing) throw new ConflictException(`Lab test with code '${dto.code}' already exists`);
 
-    return this.labTestRepo.save(
-      this.labTestRepo.create({
+    return this.db.repo(LabTest).save(
+      this.db.repo(LabTest).create({
         tenantId,
         name: dto.name,
         code: dto.code.toUpperCase(),
@@ -97,7 +82,7 @@ export class LabService {
 
   async findTests(tenantId: string, q?: string, category?: string) {
     if (q) {
-      return this.labTestRepo.find({
+      return this.db.repo(LabTest).find({
         where: [
           { tenantId, isActive: true, name: ILike(`%${q}%`) },
           { tenantId, isActive: true, code: ILike(`%${q}%`) },
@@ -106,15 +91,13 @@ export class LabService {
         order: { name: 'ASC' },
       });
     }
-
     const where: any = { tenantId, isActive: true };
     if (category) where.category = category;
-
-    return this.labTestRepo.find({ where, order: { name: 'ASC' } });
+    return this.db.repo(LabTest).find({ where, order: { name: 'ASC' } });
   }
 
   async findTestById(id: string, tenantId: string) {
-    const test = await this.labTestRepo.findOne({ where: { id, tenantId } });
+    const test = await this.db.repo(LabTest).findOne({ where: { id, tenantId } });
     if (!test) throw new NotFoundException('Lab test not found');
     return test;
   }
@@ -128,29 +111,23 @@ export class LabService {
     if (dto.normalRange !== undefined) updates.normalRange = dto.normalRange;
     if (dto.price !== undefined) updates.price = String(dto.price);
     if (dto.turnaround !== undefined) updates.turnaround = dto.turnaround;
-    await this.labTestRepo.update(id, updates);
-    return this.labTestRepo.findOne({ where: { id } });
+    await this.db.repo(LabTest).update(id, updates);
+    return this.db.repo(LabTest).findOne({ where: { id } });
   }
 
-  // ─── Lab Orders ───────────────────────────────────────────────────────────────
-
   async createOrder(tenantId: string, dto: CreateLabOrderDto) {
-    if (!dto.testIds?.length) {
-      throw new BadRequestException('At least one test is required');
-    }
+    if (!dto.testIds?.length) throw new BadRequestException('At least one test is required');
 
-    const tests = await this.labTestRepo.find({
+    const tests = await this.db.repo(LabTest).find({
       where: dto.testIds.map((id) => ({ id, tenantId, isActive: true })),
     });
 
-    if (tests.length !== dto.testIds.length) {
-      throw new BadRequestException('One or more test IDs are invalid');
-    }
+    if (tests.length !== dto.testIds.length) throw new BadRequestException('One or more test IDs are invalid');
 
     const orderNumber = await this.generateOrderNumber(tenantId);
 
-    const order = await this.labOrderRepo.save(
-      this.labOrderRepo.create({
+    const order = await this.db.repo(LabOrder).save(
+      this.db.repo(LabOrder).create({
         tenantId,
         orderNumber,
         patientId: dto.patientId,
@@ -163,27 +140,21 @@ export class LabService {
       }),
     );
 
-    // Create order items
     const items = tests.map((test) =>
-      this.labOrderItemRepo.create({
+      this.db.repo(LabOrderItem).create({
         labOrderId: order.id,
         labTestId: test.id,
         unit: test.unit,
         normalRange: test.normalRange,
       }),
     );
-    await this.labOrderItemRepo.save(items);
+    await this.db.repo(LabOrderItem).save(items);
 
-    // Create invoice for the lab order
     const totalAmount = tests.reduce((sum, t) => sum + Number(t.price), 0);
-    const lineItems = tests.map((t) => ({
-      testId: t.id,
-      name: t.name,
-      price: Number(t.price),
-    }));
+    const lineItems = tests.map((t) => ({ testId: t.id, name: t.name, price: Number(t.price) }));
 
-    await this.invoiceRepo.save(
-      this.invoiceRepo.create({
+    await this.db.repo(Invoice).save(
+      this.db.repo(Invoice).create({
         tenantId,
         patientId: dto.patientId,
         appointmentId: dto.appointmentId ?? null,
@@ -212,8 +183,8 @@ export class LabService {
   ) {
     const skip = (page - 1) * limit;
 
-    const qb = this.labOrderRepo
-      .createQueryBuilder('lo')
+    const qb = this.db
+      .qb(LabOrder, 'lo')
       .leftJoinAndSelect('lo.patient', 'patient')
       .leftJoinAndSelect('lo.orderedBy', 'orderedBy')
       .leftJoinAndSelect('lo.assignedTo', 'assignedTo')
@@ -234,14 +205,12 @@ export class LabService {
 
   async findOrderById(id: string, tenantId: string) {
     const order = await this.loadOrder(id);
-    if (!order || order.tenantId !== tenantId) {
-      throw new NotFoundException('Lab order not found');
-    }
+    if (!order || order.tenantId !== tenantId) throw new NotFoundException('Lab order not found');
     return order;
   }
 
   async updateOrderStatus(id: string, tenantId: string, status: LabOrderStatus, assignedToId?: string) {
-    const order = await this.labOrderRepo.findOne({ where: { id, tenantId } });
+    const order = await this.db.repo(LabOrder).findOne({ where: { id, tenantId } });
     if (!order) throw new NotFoundException('Lab order not found');
 
     const updates: Partial<LabOrder> = { status };
@@ -249,13 +218,13 @@ export class LabService {
     if (status === LabOrderStatus.SAMPLE_COLLECTED) updates.collectedAt = new Date();
     if (status === LabOrderStatus.COMPLETED) updates.completedAt = new Date();
 
-    await this.labOrderRepo.update(id, updates);
+    await this.db.repo(LabOrder).update(id, updates);
     return this.loadOrder(id);
   }
 
   async updateOrderItemResult(itemId: string, tenantId: string, dto: UpdateLabOrderItemDto) {
-    const item = await this.labOrderItemRepo
-      .createQueryBuilder('item')
+    const item = await this.db
+      .qb(LabOrderItem, 'item')
       .leftJoin('item.labOrder', 'order')
       .where('item.id = :itemId', { itemId })
       .andWhere('order.tenantId = :tenantId', { tenantId })
@@ -270,45 +239,28 @@ export class LabService {
     if (dto.flag !== undefined) updates.flag = dto.flag;
     if (dto.notes !== undefined) updates.notes = dto.notes;
 
-    await this.labOrderItemRepo.update(itemId, updates);
-    return this.labOrderItemRepo.findOne({ where: { id: itemId }, relations: ['labTest'] });
+    await this.db.repo(LabOrderItem).update(itemId, updates);
+    return this.db.repo(LabOrderItem).findOne({ where: { id: itemId }, relations: ['labTest'] });
   }
 
   async getAnalytics(tenantId: string, from?: string, to?: string) {
-    const qb = this.labOrderRepo
-      .createQueryBuilder('lo')
-      .where('lo.tenantId = :tenantId', { tenantId });
-
+    const qb = this.db.qb(LabOrder, 'lo').where('lo.tenantId = :tenantId', { tenantId });
     if (from) qb.andWhere('lo.createdAt >= :from', { from: new Date(from) });
     if (to) qb.andWhere('lo.createdAt <= :to', { to: new Date(to) });
 
     const [totalOrders, byStatus, byPriority, pendingCount] = await Promise.all([
       qb.getCount(),
-
-      this.labOrderRepo
-        .createQueryBuilder('lo')
-        .select('lo.status', 'status')
-        .addSelect('COUNT(lo.id)', 'count')
-        .where('lo.tenantId = :tenantId', { tenantId })
-        .groupBy('lo.status')
+      this.db.qb(LabOrder, 'lo').select('lo.status', 'status').addSelect('COUNT(lo.id)', 'count')
+        .where('lo.tenantId = :tenantId', { tenantId }).groupBy('lo.status')
         .getRawMany<{ status: string; count: string }>(),
-
-      this.labOrderRepo
-        .createQueryBuilder('lo')
-        .select('lo.priority', 'priority')
-        .addSelect('COUNT(lo.id)', 'count')
-        .where('lo.tenantId = :tenantId', { tenantId })
-        .groupBy('lo.priority')
+      this.db.qb(LabOrder, 'lo').select('lo.priority', 'priority').addSelect('COUNT(lo.id)', 'count')
+        .where('lo.tenantId = :tenantId', { tenantId }).groupBy('lo.priority')
         .getRawMany<{ priority: string; count: string }>(),
-
-      this.labOrderRepo.count({
-        where: { tenantId, status: LabOrderStatus.PENDING },
-      }),
+      this.db.repo(LabOrder).count({ where: { tenantId, status: LabOrderStatus.PENDING } }),
     ]);
 
-    // Top tests by order count
-    const topTests = await this.labOrderItemRepo
-      .createQueryBuilder('item')
+    const topTests = await this.db
+      .qb(LabOrderItem, 'item')
       .leftJoin('item.labOrder', 'order')
       .leftJoinAndSelect('item.labTest', 'test')
       .select('item.labTestId', 'labTestId')
@@ -326,11 +278,7 @@ export class LabService {
       pendingCount,
       byStatus: byStatus.map((r) => ({ status: r.status, count: Number(r.count) })),
       byPriority: byPriority.map((r) => ({ priority: r.priority, count: Number(r.count) })),
-      topTests: topTests.map((r) => ({
-        labTestId: r.labTestId,
-        testName: r.testName,
-        count: Number(r.count),
-      })),
+      topTests: topTests.map((r) => ({ labTestId: r.labTestId, testName: r.testName, count: Number(r.count) })),
     };
   }
 }

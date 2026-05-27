@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import {
@@ -9,17 +9,22 @@ import {
   NotificationLog,
   AppointmentStatus,
 } from '@mediflow/database';
-import { addDays, addMinutes, startOfDay, endOfDay, format } from 'date-fns';
+import { addDays, addMinutes, startOfDay, endOfDay } from 'date-fns';
 
+/**
+ * NOTE: Cron jobs run outside of any tenant ALS context — there is no incoming
+ * HTTP request to extract a subdomain from. Therefore this service uses the
+ * platform DataSource directly and queries across ALL tenant schemas via the
+ * public search_path. If you want schema-isolated queries per tenant you would
+ * need to iterate all active tenants and call `registry.runWithTenant()` for
+ * each one. For now cross-tenant reminder queries run against the platform DS.
+ */
 @Injectable()
 export class ReminderService {
   private readonly logger = new Logger(ReminderService.name);
 
   constructor(
-    @InjectRepository(Appointment)
-    private appointmentRepo: Repository<Appointment>,
-    @InjectRepository(NotificationLog)
-    private notificationLogRepo: Repository<NotificationLog>,
+    @InjectDataSource() private readonly platformDs: DataSource,
     @InjectQueue('notifications')
     private notificationsQueue: Queue,
   ) {}
@@ -36,7 +41,8 @@ export class ReminderService {
     const tomorrowDateStr = tomorrow.toISOString().split('T')[0];
 
     try {
-      const appointments = await this.appointmentRepo
+      const appointments = await this.platformDs
+        .getRepository(Appointment)
         .createQueryBuilder('appt')
         .leftJoinAndSelect('appt.patient', 'patient')
         .leftJoinAndSelect('appt.doctor', 'doctor')
@@ -92,7 +98,7 @@ export class ReminderService {
             },
           );
 
-          await this.appointmentRepo.update(appointment.id, {
+          await this.platformDs.getRepository(Appointment).update(appointment.id, {
             confirmation24hSentAt: new Date(),
           });
 
@@ -122,7 +128,8 @@ export class ReminderService {
     const windowDateStr = windowStart.toISOString().split('T')[0];
 
     try {
-      const appointments = await this.appointmentRepo
+      const appointments = await this.platformDs
+        .getRepository(Appointment)
         .createQueryBuilder('appt')
         .leftJoinAndSelect('appt.patient', 'patient')
         .leftJoinAndSelect('appt.doctor', 'doctor')
@@ -183,7 +190,7 @@ export class ReminderService {
             },
           );
 
-          await this.appointmentRepo.update(appointment.id, {
+          await this.platformDs.getRepository(Appointment).update(appointment.id, {
             reminder1hSentAt: new Date(),
           });
 
@@ -211,10 +218,10 @@ export class ReminderService {
     try {
       const today = new Date();
       const todayStart = startOfDay(today);
-      const todayEnd = endOfDay(today);
       const todayDateStr = today.toISOString().split('T')[0];
 
-      const inProgressAppointments = await this.appointmentRepo
+      const inProgressAppointments = await this.platformDs
+        .getRepository(Appointment)
         .createQueryBuilder('appt')
         .leftJoinAndSelect('appt.slot', 'slot')
         .where('appt.status = :status', { status: AppointmentStatus.IN_PROGRESS })
@@ -230,7 +237,8 @@ export class ReminderService {
 
           const currentToken = inProgressAppt.tokenNumber;
 
-          const upcomingAppointments = await this.appointmentRepo
+          const upcomingAppointments = await this.platformDs
+            .getRepository(Appointment)
             .createQueryBuilder('appt')
             .leftJoinAndSelect('appt.patient', 'patient')
             .leftJoinAndSelect('appt.slot', 'slot')
@@ -246,7 +254,8 @@ export class ReminderService {
             const targetAppointment = upcomingAppointments[2];
 
             // Dedup: check if QUEUE_ALERT already sent today for this appointment
-            const alreadyAlerted = await this.notificationLogRepo
+            const alreadyAlerted = await this.platformDs
+              .getRepository(NotificationLog)
               .createQueryBuilder('log')
               .where('log.tenantId = :tenantId', { tenantId: targetAppointment.tenantId })
               .andWhere('log.patientId = :patientId', { patientId: targetAppointment.patientId })

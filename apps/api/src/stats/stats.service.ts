@@ -1,6 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, In } from 'typeorm';
 import {
   Appointment,
   Invoice,
@@ -9,35 +7,20 @@ import {
   Bed,
   PharmacyOrder,
   PharmacyInventory,
-  Department,
   AppointmentStatus,
   IPDAdmissionStatus,
   LabOrderStatus,
   BedStatus,
   PharmacyOrderStatus,
   PaymentStatus,
+  TenantEntityManager,
+  MoreThanOrEqual,
+  In,
 } from '@mediflow/database';
 
 @Injectable()
 export class StatsService {
-  constructor(
-    @InjectRepository(Appointment)
-    private appointmentRepo: Repository<Appointment>,
-    @InjectRepository(Invoice)
-    private invoiceRepo: Repository<Invoice>,
-    @InjectRepository(IPDAdmission)
-    private ipdRepo: Repository<IPDAdmission>,
-    @InjectRepository(LabOrder)
-    private labOrderRepo: Repository<LabOrder>,
-    @InjectRepository(Bed)
-    private bedRepo: Repository<Bed>,
-    @InjectRepository(PharmacyOrder)
-    private pharmacyOrderRepo: Repository<PharmacyOrder>,
-    @InjectRepository(PharmacyInventory)
-    private inventoryRepo: Repository<PharmacyInventory>,
-    @InjectRepository(Department)
-    private departmentRepo: Repository<Department>,
-  ) {}
+  constructor(private readonly db: TenantEntityManager) {}
 
   async getDashboard(tenantId: string) {
     const today = new Date();
@@ -54,13 +37,13 @@ export class StatsService {
       labInProgress,
       labCompletedToday,
     ] = await Promise.all([
-      this.appointmentRepo.count({
+      this.db.repo(Appointment).count({
         where: { tenantId, createdAt: MoreThanOrEqual(today) },
       }),
-      this.ipdRepo.count({
+      this.db.repo(IPDAdmission).count({
         where: { tenantId, createdAt: MoreThanOrEqual(today) },
       }),
-      this.ipdRepo.count({
+      this.db.repo(IPDAdmission).count({
         where: {
           tenantId,
           status: In([
@@ -70,44 +53,41 @@ export class StatsService {
           ]),
         },
       }),
-      this.bedRepo.count({
+      this.db.repo(Bed).count({
         where: { tenantId, status: BedStatus.OCCUPIED },
       }),
-      this.bedRepo.count({ where: { tenantId } }),
-      this.labOrderRepo.count({
+      this.db.repo(Bed).count({ where: { tenantId } }),
+      this.db.repo(LabOrder).count({
         where: { tenantId, status: LabOrderStatus.PENDING },
       }),
-      this.labOrderRepo.count({
+      this.db.repo(LabOrder).count({
         where: {
           tenantId,
           status: In([LabOrderStatus.SAMPLE_COLLECTED, LabOrderStatus.IN_PROGRESS]),
         },
       }),
-      this.labOrderRepo.count({
+      this.db.repo(LabOrder).count({
         where: { tenantId, status: LabOrderStatus.COMPLETED, updatedAt: MoreThanOrEqual(today) },
       }),
     ]);
 
     // Revenue aggregations
     const [revToday, revMtd, pendingInvoices, revByTypeMtd] = await Promise.all([
-      this.invoiceRepo
-        .createQueryBuilder('inv')
+      this.db.qb(Invoice, 'inv')
         .select('COALESCE(SUM(inv.totalAmount), 0)', 'total')
         .where('inv.tenantId = :tenantId AND inv.paymentStatus = :status AND inv.paidAt >= :today', {
           tenantId, status: PaymentStatus.PAID, today,
         })
         .getRawOne<{ total: string }>(),
 
-      this.invoiceRepo
-        .createQueryBuilder('inv')
+      this.db.qb(Invoice, 'inv')
         .select('COALESCE(SUM(inv.totalAmount), 0)', 'total')
         .where('inv.tenantId = :tenantId AND inv.paymentStatus = :status AND inv.paidAt >= :monthStart', {
           tenantId, status: PaymentStatus.PAID, monthStart,
         })
         .getRawOne<{ total: string }>(),
 
-      this.invoiceRepo
-        .createQueryBuilder('inv')
+      this.db.qb(Invoice, 'inv')
         .select('COALESCE(SUM(inv.totalAmount), 0)', 'total')
         .addSelect('COUNT(inv.id)', 'count')
         .where('inv.tenantId = :tenantId AND inv.paymentStatus = :status', {
@@ -115,8 +95,7 @@ export class StatsService {
         })
         .getRawOne<{ total: string; count: string }>(),
 
-      this.invoiceRepo
-        .createQueryBuilder('inv')
+      this.db.qb(Invoice, 'inv')
         .select('inv.invoiceType', 'invoiceType')
         .addSelect('COALESCE(SUM(inv.totalAmount), 0)', 'total')
         .where('inv.tenantId = :tenantId AND inv.paymentStatus = :status AND inv.paidAt >= :monthStart', {
@@ -127,8 +106,7 @@ export class StatsService {
     ]);
 
     // Department load today
-    const deptLoad = await this.appointmentRepo
-      .createQueryBuilder('appt')
+    const deptLoad = await this.db.qb(Appointment, 'appt')
       .innerJoin('appt.department', 'dept')
       .select('dept.id', 'deptId')
       .addSelect('dept.name', 'name')
@@ -189,8 +167,7 @@ export class StatsService {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const toDate = to ? new Date(to) : new Date();
 
-    const rev = await this.invoiceRepo
-      .createQueryBuilder('inv')
+    const rev = await this.db.qb(Invoice, 'inv')
       .select('SUM(inv.totalAmount)', 'total')
       .where('inv.tenantId = :tenantId AND inv.paymentStatus = :status AND inv.paidAt >= :since AND inv.paidAt <= :until', {
         tenantId,
@@ -202,8 +179,7 @@ export class StatsService {
 
     const totalRevenue = parseFloat(rev?.total || '0');
 
-    const byType = await this.invoiceRepo
-      .createQueryBuilder('inv')
+    const byType = await this.db.qb(Invoice, 'inv')
       .select('inv.invoiceType', 'invoiceType')
       .addSelect('SUM(inv.totalAmount)', 'total')
       .addSelect('COUNT(inv.id)', 'count')
@@ -216,8 +192,7 @@ export class StatsService {
       .groupBy('inv.invoiceType')
       .getRawMany<{ invoiceType: string; total: string; count: string }>();
 
-    const pending = await this.invoiceRepo
-      .createQueryBuilder('inv')
+    const pending = await this.db.qb(Invoice, 'inv')
       .select('SUM(inv.totalAmount)', 'total')
       .addSelect('COUNT(inv.id)', 'count')
       .where('inv.tenantId = :tenantId AND inv.paymentStatus = :status', {
@@ -246,8 +221,7 @@ export class StatsService {
     const toDate = to ? new Date(to) : new Date();
 
     const [byStatus, byDepartment, byDoctor, totalCount] = await Promise.all([
-      this.appointmentRepo
-        .createQueryBuilder('appt')
+      this.db.qb(Appointment, 'appt')
         .select('appt.status', 'status')
         .addSelect('COUNT(appt.id)', 'count')
         .where('appt.tenantId = :tenantId AND appt.createdAt >= :from AND appt.createdAt <= :to', {
@@ -258,8 +232,7 @@ export class StatsService {
         .groupBy('appt.status')
         .getRawMany<{ status: string; count: string }>(),
 
-      this.appointmentRepo
-        .createQueryBuilder('appt')
+      this.db.qb(Appointment, 'appt')
         .leftJoin('appt.department', 'dept')
         .select('dept.name', 'departmentName')
         .addSelect('COUNT(appt.id)', 'count')
@@ -273,8 +246,7 @@ export class StatsService {
         .limit(10)
         .getRawMany<{ departmentName: string; count: string }>(),
 
-      this.appointmentRepo
-        .createQueryBuilder('appt')
+      this.db.qb(Appointment, 'appt')
         .leftJoin('appt.doctor', 'doctor')
         .select('appt.doctorId', 'doctorId')
         .addSelect("CONCAT(doctor.firstName, ' ', doctor.lastName)", 'doctorName')
@@ -291,7 +263,7 @@ export class StatsService {
         .limit(10)
         .getRawMany<{ doctorId: string; doctorName: string; count: string }>(),
 
-      this.appointmentRepo.count({
+      this.db.repo(Appointment).count({
         where: {
           tenantId,
           createdAt: MoreThanOrEqual(fromDate),
@@ -317,22 +289,19 @@ export class StatsService {
 
   async getIPDStats(tenantId: string) {
     const [admissionsByStatus, avgStay, bedOccupancy] = await Promise.all([
-      this.ipdRepo
-        .createQueryBuilder('adm')
+      this.db.qb(IPDAdmission, 'adm')
         .select('adm.status', 'status')
         .addSelect('COUNT(adm.id)', 'count')
         .where('adm.tenantId = :tenantId', { tenantId })
         .groupBy('adm.status')
         .getRawMany<{ status: string; count: string }>(),
 
-      this.ipdRepo
-        .createQueryBuilder('adm')
+      this.db.qb(IPDAdmission, 'adm')
         .select('AVG(EXTRACT(EPOCH FROM (COALESCE(adm.dischargedAt, NOW()) - adm.admittedAt)) / 86400)', 'avgDays')
         .where('adm.tenantId = :tenantId', { tenantId })
         .getRawOne<{ avgDays: string }>(),
 
-      this.bedRepo
-        .createQueryBuilder('bed')
+      this.db.qb(Bed, 'bed')
         .select('bed.status', 'status')
         .addSelect('COUNT(bed.id)', 'count')
         .where('bed.tenantId = :tenantId', { tenantId })
@@ -361,8 +330,7 @@ export class StatsService {
     const toDate = to ? new Date(to) : new Date();
 
     const [byStatus, byPriority, totalOrders] = await Promise.all([
-      this.labOrderRepo
-        .createQueryBuilder('lo')
+      this.db.qb(LabOrder, 'lo')
         .select('lo.status', 'status')
         .addSelect('COUNT(lo.id)', 'count')
         .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', {
@@ -373,8 +341,7 @@ export class StatsService {
         .groupBy('lo.status')
         .getRawMany<{ status: string; count: string }>(),
 
-      this.labOrderRepo
-        .createQueryBuilder('lo')
+      this.db.qb(LabOrder, 'lo')
         .select('lo.priority', 'priority')
         .addSelect('COUNT(lo.id)', 'count')
         .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', {
@@ -385,8 +352,7 @@ export class StatsService {
         .groupBy('lo.priority')
         .getRawMany<{ priority: string; count: string }>(),
 
-      this.labOrderRepo
-        .createQueryBuilder('lo')
+      this.db.qb(LabOrder, 'lo')
         .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', {
           tenantId,
           from: fromDate,
@@ -405,23 +371,20 @@ export class StatsService {
 
   async getPharmacyStats(tenantId: string) {
     const [byStatus, lowStock, expiryCount] = await Promise.all([
-      this.pharmacyOrderRepo
-        .createQueryBuilder('po')
+      this.db.qb(PharmacyOrder, 'po')
         .select('po.status', 'status')
         .addSelect('COUNT(po.id)', 'count')
         .where('po.tenantId = :tenantId', { tenantId })
         .groupBy('po.status')
         .getRawMany<{ status: string; count: string }>(),
 
-      this.inventoryRepo
-        .createQueryBuilder('inv')
+      this.db.qb(PharmacyInventory, 'inv')
         .where('inv.tenantId = :tenantId', { tenantId })
         .andWhere('inv.isActive = true')
         .andWhere('inv.stockQty <= inv.reorderLevel')
         .getCount(),
 
-      this.inventoryRepo
-        .createQueryBuilder('inv')
+      this.db.qb(PharmacyInventory, 'inv')
         .where('inv.tenantId = :tenantId', { tenantId })
         .andWhere('inv.isActive = true')
         .andWhere('inv.expiryDate IS NOT NULL')

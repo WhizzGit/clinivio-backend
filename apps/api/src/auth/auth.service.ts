@@ -1,32 +1,63 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { User, Role } from '@mediflow/database';
+import { User, Role, TenantDataSourceRegistry } from '@mediflow/database';
 import { JwtPayload } from '@mediflow/shared';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User) private userRepo: Repository<User>,
+    /** Platform (public schema) DataSource — used only for SUPER_ADMIN login */
+    @InjectDataSource() private readonly platformDs: DataSource,
+    /** Per-tenant ALS context — set by TenantContextMiddleware for subdomain requests */
+    private readonly registry: TenantDataSourceRegistry,
     private jwtService: JwtService,
     private configService: ConfigService,
   ) {}
 
-  async validateUser(email: string, password: string, tenantId?: string): Promise<any> {
-    const where: any = tenantId
-      ? { email, tenantId, isActive: true }
-      : { email, role: Role.SUPER_ADMIN, isActive: true };
+  /**
+   * Validates credentials for both tenant users and super admins.
+   *
+   * Tenant users:  ALS context is set by TenantContextMiddleware (subdomain routing).
+   *                We query the tenant schema DataSource directly.
+   *
+   * Super admins:  No ALS context (no subdomain / platform subdomain).
+   *                We query the platform (public) schema for role = SUPER_ADMIN.
+   */
+  async validateUser(email: string, password: string): Promise<any> {
+    const tenantDs = this.registry.currentOrNull;
 
-    const user = await this.userRepo.findOne({ where, relations: ['doctorProfile'] });
+    let user: User | null = null;
+
+    if (tenantDs) {
+      // ── Tenant user path ─────────────────────────────────────────────────
+      user = await tenantDs.getRepository(User).findOne({
+        where: { email, isActive: true },
+        relations: ['doctorProfile'],
+      });
+      if (user) {
+        const isMatch = await bcrypt.compare(password, user.passwordHash);
+        if (!isMatch) return null;
+        await tenantDs.getRepository(User).update(user.id, { lastLoginAt: new Date() });
+      }
+    } else {
+      // ── SUPER_ADMIN path (no tenant context) ─────────────────────────────
+      user = await this.platformDs.getRepository(User).findOne({
+        where: { email, role: Role.SUPER_ADMIN, isActive: true },
+        relations: ['doctorProfile'],
+      });
+      if (user) {
+        const isMatch = await bcrypt.compare(password, user.passwordHash);
+        if (!isMatch) return null;
+        await this.platformDs.getRepository(User).update(user.id, { lastLoginAt: new Date() });
+      }
+    }
+
     if (!user) return null;
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) return null;
-
-    await this.userRepo.update(user.id, { lastLoginAt: new Date() });
     const { passwordHash, ...result } = user;
     return result;
   }

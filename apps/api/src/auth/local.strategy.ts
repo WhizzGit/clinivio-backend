@@ -1,20 +1,25 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-local';
-import { Request } from 'express';
 import { AuthService } from './auth.service';
 
+/**
+ * Passport local strategy — validates email + password.
+ *
+ * Tenant context is already established by TenantContextMiddleware before
+ * this strategy runs (subdomain or X-Tenant-Slug header). AuthService reads
+ * the ALS store to decide whether to query the tenant schema or the platform schema.
+ *
+ * No tenantId body parameter is needed; the subdomain carries the tenant identity.
+ */
 @Injectable()
 export class LocalStrategy extends PassportStrategy(Strategy) {
   constructor(private authService: AuthService) {
-    // passReqToCallback: true → validate receives (req, email, password)
-    // so we can read tenantId from the request body
-    super({ usernameField: 'email', passReqToCallback: true });
+    super({ usernameField: 'email' });
   }
 
-  async validate(req: Request, email: string, password: string): Promise<any> {
-    const tenantId = (req.body as any)?.tenantId ?? undefined;
-    const user = await this.authService.validateUser(email, password, tenantId);
+  async validate(email: string, password: string): Promise<any> {
+    const user = await this.authService.validateUser(email, password);
     if (!user) throw new UnauthorizedException('Invalid credentials');
     return user;
   }
