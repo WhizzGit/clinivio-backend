@@ -11,6 +11,7 @@ import { Repository, DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { Tenant, User, Role, TenantDataSourceRegistry } from '@mediflow/database';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
 
 @Injectable()
 export class TenantsService {
@@ -163,29 +164,74 @@ export class TenantsService {
     };
   }
 
-  async update(id: string, data: Partial<CreateTenantDto>) {
-    await this.findById(id);
-    await this.tenantRepo.update(id, {
-      ...(data.name && { name: data.name }),
-      ...(data.address !== undefined && { address: data.address }),
-      ...(data.city !== undefined && { city: data.city }),
-      ...(data.state !== undefined && { state: data.state }),
-      ...(data.pincode !== undefined && { pincode: data.pincode }),
-      ...(data.gstin !== undefined && { gstin: data.gstin }),
-      ...(data.drugLicenseNo !== undefined && { drugLicenseNo: data.drugLicenseNo }),
-      ...(data.phone !== undefined && { phone: data.phone }),
-      ...(data.email !== undefined && { email: data.email }),
-      ...(data.website !== undefined && { website: data.website }),
-      ...(data.registrationNo !== undefined && { registrationNo: data.registrationNo }),
-      ...(data.tagline !== undefined && { tagline: data.tagline }),
-      ...(data.printHeader !== undefined && { printHeader: data.printHeader }),
-      ...(data.logoUrl !== undefined && { logoUrl: data.logoUrl }),
-      ...(data.pharmacyName !== undefined && { pharmacyName: data.pharmacyName }),
-      ...(data.portalUrl !== undefined && { portalUrl: data.portalUrl }),
-      ...(data.subscriptionTier !== undefined && {
-        subscriptionTier: data.subscriptionTier as any,
-      }),
-    });
+  /**
+   * Update any combination of tenant profile fields and/or admin user credentials.
+   * SuperAdmin can change everything that was set during onboarding in a single call.
+   */
+  async update(id: string, data: UpdateTenantDto): Promise<Tenant> {
+    const tenant = await this.findById(id);
+
+    // ── 1. Tenant profile fields ────────────────────────────────────────────
+    const tenantPatch: Partial<Tenant> = {};
+    const str = (v: string | undefined) => v !== undefined;
+    if (str(data.name))                   tenantPatch.name                   = data.name!;
+    if (str(data.address))                tenantPatch.address                = data.address!;
+    if (str(data.city))                   tenantPatch.city                   = data.city!;
+    if (str(data.state))                  tenantPatch.state                  = data.state!;
+    if (str(data.stateCode))              tenantPatch.stateCode              = data.stateCode!;
+    if (str(data.pincode))                tenantPatch.pincode                = data.pincode!;
+    if (str(data.gstin))                  tenantPatch.gstin                  = data.gstin!;
+    if (str(data.drugLicenseNo))          tenantPatch.drugLicenseNo          = data.drugLicenseNo!;
+    if (str(data.abhaHipId))              tenantPatch.abhaHipId              = data.abhaHipId!;
+    if (str(data.whatsappPhoneNumberId))  tenantPatch.whatsappPhoneNumberId  = data.whatsappPhoneNumberId!;
+    if (str(data.wabaId))                 tenantPatch.wabaId                 = data.wabaId!;
+    if (str(data.phone))                  tenantPatch.phone                  = data.phone!;
+    if (str(data.email))                  tenantPatch.email                  = data.email!;
+    if (str(data.website))                tenantPatch.website                = data.website!;
+    if (str(data.registrationNo))         tenantPatch.registrationNo         = data.registrationNo!;
+    if (str(data.tagline))                tenantPatch.tagline                = data.tagline!;
+    if (str(data.printHeader))            tenantPatch.printHeader            = data.printHeader!;
+    if (str(data.logoUrl))                tenantPatch.logoUrl                = data.logoUrl!;
+    if (str(data.pharmacyName))           tenantPatch.pharmacyName           = data.pharmacyName!;
+    if (str(data.portalUrl))              tenantPatch.portalUrl              = data.portalUrl!;
+    if (data.subscriptionTier !== undefined) tenantPatch.subscriptionTier    = data.subscriptionTier as any;
+    if (data.isActive !== undefined)         tenantPatch.isActive            = data.isActive;
+
+    if (Object.keys(tenantPatch).length) {
+      await this.tenantRepo.update(id, tenantPatch);
+    }
+
+    // ── 2. Admin user fields (only if any admin field was supplied) ──────────
+    const hasAdminUpdate =
+      data.adminEmail    !== undefined ||
+      data.adminPassword !== undefined ||
+      data.adminFirstName !== undefined ||
+      data.adminLastName  !== undefined ||
+      data.adminPhone     !== undefined;
+
+    if (hasAdminUpdate) {
+      if (!tenant.slug) {
+        throw new ConflictException('Cannot update admin user for the platform tenant via this endpoint');
+      }
+      const tenantDs = await this.registry.getOrCreate(id, tenant.slug);
+      const userRepo  = tenantDs.getRepository(User);
+
+      const admin = await userRepo.findOne({ where: { role: Role.ADMIN, isActive: true } });
+      if (!admin) {
+        throw new NotFoundException('No active ADMIN user found for this tenant');
+      }
+
+      const userPatch: Partial<User> = {};
+      if (str(data.adminEmail))     userPatch.email     = data.adminEmail!;
+      if (str(data.adminFirstName)) userPatch.firstName = data.adminFirstName!;
+      if (str(data.adminLastName))  userPatch.lastName  = data.adminLastName!;
+      if (str(data.adminPhone))     userPatch.phone     = data.adminPhone!;
+      if (str(data.adminPassword))  userPatch.passwordHash = await bcrypt.hash(data.adminPassword!, 12);
+
+      await userRepo.update(admin.id, userPatch);
+      this.logger.log(`Updated admin user ${admin.id} for tenant ${id}`);
+    }
+
     return this.findById(id);
   }
 

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards } from '@n
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { TenantsService } from './tenants.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard, Roles } from '@mediflow/shared';
 
@@ -14,42 +15,54 @@ export class TenantsController {
 
   @Get()
   @Roles('SUPER_ADMIN')
+  @ApiOperation({ summary: 'List all tenants with user counts and admin info' })
   findAll() { return this.tenantsService.findAllWithStats(); }
 
   @Get(':id')
   @Roles('SUPER_ADMIN', 'ADMIN')
+  @ApiOperation({ summary: 'Get a single tenant by ID' })
   findOne(@Param('id') id: string) { return this.tenantsService.findById(id); }
 
   @Post()
   @Roles('SUPER_ADMIN')
-  @ApiOperation({ summary: 'Onboard a new hospital tenant' })
+  @ApiOperation({ summary: 'Onboard a new hospital tenant (creates schema + admin user)' })
   create(@Body() dto: CreateTenantDto) { return this.tenantsService.create(dto); }
 
+  /**
+   * Full edit — any combination of tenant profile fields and/or admin credentials.
+   * SuperAdmin can update everything that was set during onboarding in one call.
+   */
   @Patch(':id')
   @Roles('SUPER_ADMIN')
-  update(@Param('id') id: string, @Body() dto: Partial<CreateTenantDto>) {
+  @ApiOperation({
+    summary: 'Edit tenant profile and/or admin user credentials',
+    description:
+      'All fields are optional. Supply any tenant profile fields (name, address, subscription ' +
+      'tier, WhatsApp IDs, …) and/or admin user fields (adminEmail, adminPassword, ' +
+      'adminFirstName, adminLastName, adminPhone) in a single PATCH.',
+  })
+  update(@Param('id') id: string, @Body() dto: UpdateTenantDto) {
     return this.tenantsService.update(id, dto);
   }
 
-  @Post(':id/reset-admin-password')
-  @Roles('SUPER_ADMIN')
-  resetAdminPassword(@Param('id') id: string) {
-    return this.tenantsService.resetAdminPassword(id);
-  }
-
+  /**
+   * Tenant-level profile endpoint — same underlying service method, but accessible
+   * to ADMIN and PHARMACIST roles within their own tenant context.
+   */
   @Patch(':id/profile')
   @Roles('SUPER_ADMIN', 'ADMIN', 'PHARMACIST')
-  @ApiOperation({ summary: 'Update hospital/pharmacy profile for printing' })
-  updateProfile(@Param('id') id: string, @Body() dto: Partial<CreateTenantDto>) {
+  @ApiOperation({ summary: 'Update hospital/pharmacy profile (logo, print header, tagline, …)' })
+  updateProfile(@Param('id') id: string, @Body() dto: UpdateTenantDto) {
     return this.tenantsService.update(id, dto);
   }
 
   @Patch(':id/deactivate')
   @Roles('SUPER_ADMIN')
+  @ApiOperation({ summary: 'Deactivate a tenant (soft disable, keeps data)' })
   deactivate(@Param('id') id: string) { return this.tenantsService.deactivate(id); }
 
   @Delete(':id')
   @Roles('SUPER_ADMIN')
-  @ApiOperation({ summary: 'Permanently delete a tenant and drop its schema' })
+  @ApiOperation({ summary: 'Permanently delete a tenant — drops schema and all data' })
   delete(@Param('id') id: string) { return this.tenantsService.delete(id); }
 }
