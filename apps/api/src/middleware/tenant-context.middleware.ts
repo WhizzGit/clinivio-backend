@@ -63,15 +63,30 @@ export class TenantContextMiddleware implements NestMiddleware {
       return header.trim().toLowerCase();
     }
 
-    // 2. Subdomain: host = "hansvl.clinivio.ai"  →  slug = "hansvl"
-    const host = req.hostname ?? '';  // hostname strips port
+    // 2. Subdomain: only extract a tenant slug when the request comes in on a
+    //    known Clinivio platform domain.
+    //
+    //    ✓  hansvl.clinivio.ai          →  slug = "hansvl"
+    //    ✓  apollo.whizzon.ai           →  slug = "apollo"
+    //    ✗  clinivio-backend.onrender.com  →  ignored (Render direct URL)
+    //    ✗  clinivio-frontend.vercel.app   →  ignored (Vercel preview URL)
+    //    ✗  localhost                       →  ignored
+    const host = req.hostname ?? '';
     const parts = host.split('.');
 
-    // Need at least: slug + domain + tld  (3 parts)
-    // Skip "www", "admin", "api" — those are platform subdomains, not tenants
-    const PLATFORM_SUBDOMAINS = new Set(['www', 'admin', 'api', 'app', 'localhost']);
-    if (parts.length >= 3 && !PLATFORM_SUBDOMAINS.has(parts[0])) {
-      return parts[0].toLowerCase();
+    const PLATFORM_BASE_DOMAINS = new Set(
+      (process.env.PLATFORM_DOMAINS ?? 'clinivio.ai,whizzon.ai')
+        .split(',')
+        .map(d => d.trim().toLowerCase()),
+    );
+    const PLATFORM_SUBDOMAINS = new Set(['www', 'admin', 'api', 'app']);
+
+    if (parts.length >= 3) {
+      const baseDomain = parts.slice(-2).join('.');
+      const subdomain  = parts[0].toLowerCase();
+      if (PLATFORM_BASE_DOMAINS.has(baseDomain) && !PLATFORM_SUBDOMAINS.has(subdomain)) {
+        return subdomain;
+      }
     }
 
     return null;
