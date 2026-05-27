@@ -8,23 +8,23 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
-// Prisma error codes reference: https://www.prisma.io/docs/reference/api-reference/error-reference
-const PRISMA_ERROR_MAP: Readonly<Record<string, { status: number; message: string }>> = {
-  P2000: { status: 400, message: 'Input value too long' },
-  P2001: { status: 404, message: 'Record not found' },
-  P2002: { status: 409, message: 'A record with this value already exists' },
-  P2003: { status: 400, message: 'Related record not found' },
-  P2004: { status: 400, message: 'Constraint failed on the database' },
-  P2025: { status: 404, message: 'Record to update or delete was not found' },
+// PostgreSQL / TypeORM QueryFailedError codes
+// https://www.postgresql.org/docs/current/errcodes-appendix.html
+const PG_ERROR_MAP: Readonly<Record<string, { status: number; message: string }>> = {
+  '23505': { status: 409, message: 'A record with this value already exists' },   // unique_violation
+  '23503': { status: 400, message: 'Related record not found' },                   // foreign_key_violation
+  '23502': { status: 400, message: 'A required field is missing' },                // not_null_violation
+  '23514': { status: 400, message: 'Value violates a check constraint' },          // check_violation
+  '22001': { status: 400, message: 'Input value too long' },                       // string_data_right_truncation
+  '42P01': { status: 500, message: 'Database table not found' },                   // undefined_table
 };
 
-function isPrismaError(err: unknown): err is { code: string; meta?: Record<string, unknown>; message: string } {
+function isTypeOrmQueryError(err: unknown): err is { code: string; detail?: string; message: string } {
   return (
     typeof err === 'object' &&
     err !== null &&
-    'code' in err &&
-    typeof (err as Record<string, unknown>).code === 'string' &&
-    !!((err as Record<string, unknown>).code as string | undefined)?.startsWith('P')
+    (err as Record<string, unknown>).constructor?.name === 'QueryFailedError' &&
+    typeof (err as Record<string, unknown>).code === 'string'
   );
 }
 
@@ -72,14 +72,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
       this.logger.warn(`[${requestId}] HTTP ${statusCode} ${method} ${path}: ${message}`);
 
-    // Prisma known errors
-    } else if (isPrismaError(exception)) {
-      const mapped = PRISMA_ERROR_MAP[exception.code];
+    // TypeORM / PostgreSQL database errors
+    } else if (isTypeOrmQueryError(exception)) {
+      const mapped = PG_ERROR_MAP[exception.code];
       statusCode = mapped?.status ?? HttpStatus.INTERNAL_SERVER_ERROR;
       message = mapped?.message ?? 'Database error';
 
       this.logger.error(
-        `[${requestId}] Prisma ${exception.code} on ${method} ${path}: ${isProd ? message : exception.message}`,
+        `[${requestId}] DB ${exception.code} on ${method} ${path}: ${isProd ? message : (exception.detail ?? exception.message)}`,
         isProd ? undefined : String((exception as unknown as { stack?: string }).stack ?? ''),
       );
 
