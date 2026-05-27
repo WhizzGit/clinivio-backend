@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -31,6 +32,16 @@ export class TenantsService {
     const tenants = await this.tenantRepo.find({ order: { createdAt: 'DESC' } });
     return Promise.all(
       tenants.map(async (t) => {
+        // Skip the platform tenant (slug = null) — it has no tenant schema
+        if (!t.slug) {
+          return {
+            ...t,
+            userCount: 0,
+            adminEmail: null,
+            adminName: null,
+            adminLastLogin: null,
+          };
+        }
         try {
           const tenantDs = await this.registry.getOrCreate(t.id, t.slug);
           const [userCount, adminUser] = await Promise.all([
@@ -184,6 +195,33 @@ export class TenantsService {
     // Evict the cached DataSource so it closes connections
     await this.registry.evict(id);
     return this.findById(id);
+  }
+
+  /**
+   * Permanently deletes a tenant — drops its schema and removes the public.tenants row.
+   * The platform tenant (slug = null) cannot be deleted.
+   */
+  async delete(id: string): Promise<{ message: string }> {
+    const tenant = await this.findById(id);
+
+    if (!tenant.slug) {
+      throw new ForbiddenException('The platform tenant cannot be deleted');
+    }
+
+    // 1. Close and evict the cached DataSource for this tenant
+    await this.registry.evict(id);
+
+    // 2. Drop the entire PostgreSQL schema (CASCADE removes all tables & data)
+    await this.platformDs.query(
+      `DROP SCHEMA IF EXISTS "tenant_${tenant.slug}" CASCADE`,
+    );
+    this.logger.log(`Dropped schema tenant_${tenant.slug}`);
+
+    // 3. Remove the tenant record from the public schema
+    await this.tenantRepo.delete(id);
+    this.logger.log(`Deleted tenant record ${id} (${tenant.name})`);
+
+    return { message: `Tenant '${tenant.name}' has been permanently deleted` };
   }
 
   async resetAdminPassword(tenantId: string) {

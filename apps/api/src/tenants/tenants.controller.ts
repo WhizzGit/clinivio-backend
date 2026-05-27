@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { TenantsService } from './tenants.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
@@ -47,4 +47,9 @@ export class TenantsController {
   @Patch(':id/deactivate')
   @Roles('SUPER_ADMIN')
   deactivate(@Param('id') id: string) { return this.tenantsService.deactivate(id); }
+
+  @Delete(':id')
+  @Roles('SUPER_ADMIN')
+  @ApiOperation({ summary: 'Permanently delete a tenant and drop its schema' })
+  delete(@Param('id') id: string) { return this.tenantsService.delete(id); }
 }

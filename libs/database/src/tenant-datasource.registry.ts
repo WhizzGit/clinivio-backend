@@ -122,9 +122,12 @@ export class TenantDataSourceRegistry implements OnApplicationShutdown {
       // All entities live in this tenant's schema — TypeORM sets search_path automatically
       schema: `tenant_${slug}`,
       entities: ALL_ENTITIES,
-      // Auto-sync creates/alters tables in the tenant schema.
-      // For production use TypeORM migrations instead.
-      synchronize: !isProd,
+      // Always synchronize — tenant schemas are provisioned on-demand and must
+      // have their tables created regardless of NODE_ENV.  Each tenant gets its
+      // own isolated schema so there is no risk of cross-tenant data corruption
+      // from an accidental schema change.  (Use TypeORM migrations per-schema
+      // if you ever need to gate changes in production.)
+      synchronize: true,
       ssl: isProd ? { rejectUnauthorized: false } : false,
       logging: process.env.LOG_QUERIES === 'true' ? ['query', 'error'] : ['error'],
       extra: {
