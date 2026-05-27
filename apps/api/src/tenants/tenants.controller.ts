@@ -56,6 +56,14 @@ export class TenantsController {
     return this.tenantsService.update(id, dto);
   }
 
+  /** Generate a fresh random password for the tenant's ADMIN user and return it */
+  @Post(':id/reset-admin-password')
+  @Roles('SUPER_ADMIN')
+  @ApiOperation({ summary: 'Reset admin password — generates a secure random password' })
+  resetAdminPassword(@Param('id') id: string) {
+    return this.tenantsService.resetAdminPassword(id);
+  }
+
   @Patch(':id/deactivate')
   @Roles('SUPER_ADMIN')
   @ApiOperation({ summary: 'Deactivate a tenant (soft disable, keeps data)' })
