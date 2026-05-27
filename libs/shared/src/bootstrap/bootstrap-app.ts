@@ -33,7 +33,7 @@ export async function bootstrapApp(app: INestApplication, opts: BootstrapOptions
   // ── CORS ────────────────────────────────────────────────────────────────────
   const origins = opts.allowedOrigins?.length
     ? opts.allowedOrigins
-    : (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000').split(',').map(s => s.trim());
+    : (process.env.ALLOWED_ORIGINS ?? 'https://clinivio-frontend.vercel.app').split(',').map(s => s.trim());
 
   app.enableCors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
