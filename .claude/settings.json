@@ -4,7 +4,8 @@
       "Read(//d/Projects/clinivio-frontend/src/**)",
       "Read(//c/Users/Arulraj/AppData/Local/Temp/**)",
       "PowerShell(try { $r = Invoke-RestMethod -Uri \"http://localhost:3000/health\" -Method GET; Write-Host \"Backend UP: $\\($r.status\\)\" } catch { Write-Host \"Backend: $\\($_.Exception.Message\\)\" })",
-      "PowerShell($conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conn\\) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue; Write-Host \"Killed $\\($conn.OwningProcess\\)\" } else { Write-Host \"Port 3000 free\" })"
+      "PowerShell($conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conn\\) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue; Write-Host \"Killed $\\($conn.OwningProcess\\)\" } else { Write-Host \"Port 3000 free\" })",
+      "Bash(pnpm build *)"
     ]
   }
 }

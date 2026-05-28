@@ -289,6 +289,7 @@ export class TenantsService {
       adminName: `${admin.firstName} ${admin.lastName}`,
       temporaryPassword: newPassword,
       tenantId,
+      tenantSlug: tenant.slug,
     };
   }
 
