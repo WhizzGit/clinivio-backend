@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -132,5 +132,53 @@ export class AuthService {
 
   async logout(_userId: string) {
     return { message: 'Logged out successfully' };
+  }
+
+  /**
+   * Change the calling user's own password.
+   *
+   * Works for every role — SUPER_ADMIN (public schema) and all tenant users.
+   * Verifies the current password before applying the change.
+   */
+  async changePassword(
+    userId: string,
+    tenantId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    // ── Resolve the right DataSource ──────────────────────────────────────
+    // Prefer ALS context (subdomain requests). If absent, use tenantId from
+    // the JWT to bootstrap the correct DataSource — handles Render/Vercel
+    // direct-URL logins where no subdomain sets the ALS context.
+    let targetDs = this.registry.currentOrNull;
+
+    if (!targetDs) {
+      const tenant = await this.platformDs
+        .getRepository(Tenant)
+        .findOne({ where: { id: tenantId } });
+
+      if (tenant?.slug) {
+        // Tenant user — bootstrap their schema DataSource
+        targetDs = await this.registry.getOrCreate(tenant.id, tenant.slug);
+      }
+      // If no slug → platform tenant → targetDs stays null → use platformDs below
+    }
+
+    const repo = targetDs
+      ? targetDs.getRepository(User)
+      : this.platformDs.getRepository(User);
+
+    // ── Verify current password ──────────────────────────────────────────
+    const user = await repo.findOne({ where: { id: userId, isActive: true } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isMatch) throw new UnauthorizedException('Current password is incorrect');
+
+    // ── Apply new password ────────────────────────────────────────────────
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await repo.update(userId, { passwordHash });
+
+    return { message: 'Password changed successfully' };
   }
 }

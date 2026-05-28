@@ -1,7 +1,7 @@
-import { Controller, Post, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Patch, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { IsEmail, IsString, IsOptional, IsUUID } from 'class-validator';
+import { IsEmail, IsString, IsOptional, IsUUID, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -27,6 +27,15 @@ class LoginDto {
 class RefreshTokenDto {
   @IsString()
   refreshToken: string;
+}
+
+class ChangePasswordDto {
+  @IsString()
+  currentPassword: string;
+
+  @IsString()
+  @MinLength(8)
+  newPassword: string;
 }
 
 @ApiTags('Authentication')
@@ -55,5 +64,19 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(@Request() req: any) {
     return this.authService.logout(req.user.id);
+  }
+
+  @Patch('change-password')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Change the authenticated user\'s own password' })
+  async changePassword(@Body() dto: ChangePasswordDto, @Request() req: any) {
+    return this.authService.changePassword(
+      req.user.id,
+      req.user.tenantId,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 }
