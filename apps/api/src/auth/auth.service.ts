@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { User, Role, TenantDataSourceRegistry } from '@mediflow/database';
+import { User, Tenant, Role, TenantDataSourceRegistry } from '@mediflow/database';
 import { JwtPayload } from '@mediflow/shared';
 
 @Injectable()
@@ -21,30 +21,54 @@ export class AuthService {
   /**
    * Validates credentials for both tenant users and super admins.
    *
-   * Tenant users:  ALS context is set by TenantContextMiddleware (subdomain routing).
-   *                We query the tenant schema DataSource directly.
+   * Resolution order for the DataSource to query:
+   *  1. Explicit tenantId / slug from the login body  ← new: single-URL login
+   *  2. ALS context set by TenantContextMiddleware (subdomain / X-Tenant-Slug header)
+   *  3. Platform (public) schema — SUPER_ADMIN only
    *
-   * Super admins:  No ALS context (no subdomain / platform subdomain).
-   *                We query the platform (public) schema for role = SUPER_ADMIN.
+   * This lets all user types share one login URL regardless of subdomain.
    */
-  async validateUser(email: string, password: string): Promise<any> {
-    const tenantDs = this.registry.currentOrNull;
+  async validateUser(
+    email: string,
+    password: string,
+    tenantId?: string,
+    slug?: string,
+  ): Promise<any> {
+    // ── Resolve DataSource ─────────────────────────────────────────────────
+    let targetDs = this.registry.currentOrNull;
 
+    if (!targetDs && (tenantId || slug)) {
+      // Body-supplied tenant identifier — look up the tenant record then
+      // bootstrap (or reuse a cached) DataSource for that schema.
+      const where = tenantId
+        ? { id: tenantId, isActive: true }
+        : { slug,        isActive: true };
+
+      const tenant = await this.platformDs
+        .getRepository(Tenant)
+        .findOne({ where });
+
+      if (tenant?.slug) {
+        targetDs = await this.registry.getOrCreate(tenant.id, tenant.slug);
+      }
+    }
+
+    // ── Query the right schema ─────────────────────────────────────────────
     let user: User | null = null;
 
-    if (tenantDs) {
+    if (targetDs) {
       // ── Tenant user path ─────────────────────────────────────────────────
-      user = await tenantDs.getRepository(User).findOne({
+      user = await targetDs.getRepository(User).findOne({
         where: { email, isActive: true },
         relations: ['doctorProfile'],
       });
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);
         if (!isMatch) return null;
-        await tenantDs.getRepository(User).update(user.id, { lastLoginAt: new Date() });
+        await targetDs.getRepository(User).update(user.id, { lastLoginAt: new Date() });
       }
     } else {
-      // ── SUPER_ADMIN path (no tenant context) ─────────────────────────────
+      // ── SUPER_ADMIN path (no tenant context anywhere) ─────────────────────
       user = await this.platformDs.getRepository(User).findOne({
         where: { email, role: Role.SUPER_ADMIN, isActive: true },
         relations: ['doctorProfile'],

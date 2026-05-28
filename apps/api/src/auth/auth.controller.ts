@@ -13,9 +13,15 @@ class LoginDto {
   @IsString()
   password: string;
 
+  /** Tenant UUID — accepted for backwards compatibility */
   @IsOptional()
   @IsUUID()
   tenantId?: string;
+
+  /** Hospital slug (e.g. "citihospital") — preferred over tenantId for UI login */
+  @IsOptional()
+  @IsString()
+  slug?: string;
 }
 
 class RefreshTokenDto {

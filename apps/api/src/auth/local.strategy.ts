@@ -1,25 +1,34 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-local';
+import type { Request } from 'express';
 import { AuthService } from './auth.service';
 
 /**
  * Passport local strategy — validates email + password.
  *
- * Tenant context is already established by TenantContextMiddleware before
- * this strategy runs (subdomain or X-Tenant-Slug header). AuthService reads
- * the ALS store to decide whether to query the tenant schema or the platform schema.
+ * Supports two login paths from a single URL:
  *
- * No tenantId body parameter is needed; the subdomain carries the tenant identity.
+ * 1. SUPER_ADMIN — no tenant identifier needed:
+ *      { email, password }
+ *
+ * 2. Tenant staff (ADMIN, DOCTOR, etc.) — supply either the tenant UUID or slug:
+ *      { email, password, tenantId: "<uuid>" }
+ *      { email, password, slug: "citihospital" }
+ *
+ * When a tenantId / slug is present, AuthService directly bootstraps the
+ * matching DataSource instead of relying on ALS context from the middleware.
+ * This lets all users share the same login URL regardless of subdomain.
  */
 @Injectable()
 export class LocalStrategy extends PassportStrategy(Strategy) {
   constructor(private authService: AuthService) {
-    super({ usernameField: 'email' });
+    super({ usernameField: 'email', passReqToCallback: true });
   }
 
-  async validate(email: string, password: string): Promise<any> {
-    const user = await this.authService.validateUser(email, password);
+  async validate(req: Request, email: string, password: string): Promise<any> {
+    const { tenantId, slug } = req.body as { tenantId?: string; slug?: string };
+    const user = await this.authService.validateUser(email, password, tenantId, slug);
     if (!user) throw new UnauthorizedException('Invalid credentials');
     return user;
   }
