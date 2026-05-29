@@ -46,7 +46,7 @@ export async function bootstrapApp(app: INestApplication, opts: BootstrapOptions
     },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Tenant-ID'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Tenant-ID', 'X-Tenant-Slug'],
     exposedHeaders: ['X-Request-ID'],
   });
 
