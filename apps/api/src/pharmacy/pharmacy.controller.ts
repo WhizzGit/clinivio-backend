@@ -22,7 +22,7 @@ export class PharmacyController {
   // ─── Pharmacy Orders ──────────────────────────────────────────────────────────
 
   @Get('orders')
-  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE', 'PHARMACIST')
   @ApiOperation({ summary: 'List pharmacy orders' })
   findAllOrders(
     @TenantId() tenantId: string,
@@ -36,7 +36,7 @@ export class PharmacyController {
   }
 
   @Get('orders/:id')
-  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE', 'PHARMACIST')
   @ApiOperation({ summary: 'Get pharmacy order by ID' })
   findOrder(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.findOrderById(id, tenantId);
@@ -56,7 +56,7 @@ export class PharmacyController {
   // ─── Inventory ────────────────────────────────────────────────────────────────
 
   @Get('inventory')
-  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'PHARMACIST')
   @ApiOperation({ summary: 'List pharmacy inventory' })
   listInventory(
     @TenantId() tenantId: string,
@@ -92,7 +92,7 @@ export class PharmacyController {
   }
 
   @Get('inventory/:id')
-  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'PHARMACIST')
   @ApiOperation({ summary: 'Get inventory item by ID' })
   findItem(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.findInventoryItem(id, tenantId);

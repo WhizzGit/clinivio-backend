@@ -23,7 +23,7 @@ export class LabController {
   // ─── Lab Test Catalog ─────────────────────────────────────────────────────────
 
   @Get('tests')
-  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE', 'LAB_TECHNICIAN')
   @ApiOperation({ summary: 'List lab tests' })
   findTests(
     @TenantId() tenantId: string,
