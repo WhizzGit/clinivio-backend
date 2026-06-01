@@ -157,10 +157,12 @@ export class AppointmentsController {
     return this.consultationSvc.createFollowUp(id, tenantId, dto);
   }
 
-  // ─── Action routes (PATCH + POST aliases) ─────────────────────────────────
-  // The frontend uses POST for all action routes; keep PATCH for API clients.
+  // ─── Action routes ────────────────────────────────────────────────────────
+  // NOTE: Do NOT stack @Patch + @Post on the same handler. TypeScript applies
+  // method decorators bottom-to-top, so the TOP decorator is applied LAST and
+  // overwrites the bottom one. Only one HTTP method ends up registered.
+  // The frontend uses POST for all action routes, so use @Post only here.
 
-  @Patch(':id/confirm-payment')
   @Post(':id/confirm-payment')
   @Roles('ADMIN', 'RECEPTIONIST')
   @ApiOperation({ summary: 'Confirm payment → CONFIRMED' })
@@ -172,7 +174,6 @@ export class AppointmentsController {
     return this.svc.confirmPayment(id, tenantId, body.paymentMethod, body.amount, body.razorpayPaymentId);
   }
 
-  @Patch(':id/check-in')
   @Post(':id/check-in')
   @Roles('ADMIN', 'RECEPTIONIST', 'NURSE')
   @ApiOperation({ summary: 'Check in the patient' })
@@ -180,22 +181,20 @@ export class AppointmentsController {
     return this.svc.checkIn(id, tenantId);
   }
 
-  /** PATCH + POST /appointments/:id/start — alias for start-consultation */
-  @Patch(':id/start')
   @Post(':id/start')
   @Roles('DOCTOR', 'NURSE')
   @ApiOperation({ summary: 'Start consultation (CHECKED_IN → IN_PROGRESS)' })
-  startConsultationAlias(@Param('id') id: string, @TenantId() tenantId: string) {
-    return this.svc.startConsultation(id, tenantId);
-  }
-
-  @Patch(':id/start-consultation')
-  @Roles('DOCTOR', 'NURSE')
   startConsultation(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.startConsultation(id, tenantId);
   }
 
-  @Patch(':id/complete')
+  /** PATCH alias kept for REST API clients */
+  @Patch(':id/start-consultation')
+  @Roles('DOCTOR', 'NURSE')
+  startConsultationPatch(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.svc.startConsultation(id, tenantId);
+  }
+
   @Post(':id/complete')
   @Roles('DOCTOR')
   @ApiOperation({ summary: 'Complete the appointment' })
@@ -203,7 +202,6 @@ export class AppointmentsController {
     return this.svc.complete(id, tenantId);
   }
 
-  @Patch(':id/send-to-pharmacy')
   @Post(':id/send-to-pharmacy')
   @Roles('DOCTOR', 'NURSE', 'RECEPTIONIST')
   @ApiOperation({ summary: 'Send to pharmacy' })
@@ -211,7 +209,7 @@ export class AppointmentsController {
     return this.svc.sendToPharmacy(id, tenantId);
   }
 
-  @Patch(':id/cancel')
+  @Post(':id/cancel')
   @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR')
   @ApiOperation({ summary: 'Cancel appointment' })
   cancel(
