@@ -203,21 +203,23 @@ export class AppointmentsService {
     return appointment;
   }
 
-  async findDoctorQueue(doctorId: string, tenantId: string, date?: string) {
+  /**
+   * Returns today's queue for a specific doctor, or the full-day queue for all
+   * doctors when doctorId is null (used by nurses who assist any patient).
+   */
+  async findDoctorQueue(doctorId: string | null, tenantId: string, date?: string) {
     const target = date ? new Date(date) : new Date();
-    const startOfDay = new Date(target);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(target);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = new Date(target); startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay   = new Date(target); endOfDay.setHours(23, 59, 59, 999);
 
     const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];
 
-    return this.db
+    const qb = this.db
       .qb(Appointment, 'appt')
       .leftJoinAndSelect('appt.patient', 'patient')
       .leftJoinAndSelect('appt.slot', 'slot')
+      .leftJoinAndSelect('appt.doctor', 'doctor')
       .where('appt.tenantId = :tenantId', { tenantId })
-      .andWhere('appt.doctorId = :doctorId', { doctorId })
       .andWhere(
         `(
           (appt.status IN (:...activeStatuses))
@@ -227,8 +229,14 @@ export class AppointmentsService {
         { activeStatuses, completed: AppointmentStatus.COMPLETED, startOfDay, endOfDay },
       )
       .orderBy('appt.tokenNumber', 'ASC')
-      .addOrderBy('appt.createdAt', 'ASC')
-      .getMany();
+      .addOrderBy('appt.createdAt', 'ASC');
+
+    // Doctors see only their own patients; nurses see the entire day's queue
+    if (doctorId) {
+      qb.andWhere('appt.doctorId = :doctorId', { doctorId });
+    }
+
+    return qb.getMany();
   }
 
   async checkIn(id: string, tenantId: string) {
@@ -338,32 +346,43 @@ export class AppointmentsService {
     return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
   }
 
-  async getQueueStatus(doctorId: string, tenantId: string) {
+  /**
+   * Queue summary counts — doctorId=null means "all doctors" (used for nurses).
+   */
+  async getQueueStatus(doctorId: string | null, tenantId: string) {
     const today = new Date();
-    const startOfDay = new Date(today);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = new Date(today); startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay   = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+
+    // Helper: base query scoped to tenant + optional doctor
+    const base = () => {
+      const qb = this.db.qb(Appointment, 'appt')
+        .where('appt.tenantId = :tenantId', { tenantId });
+      if (doctorId) qb.andWhere('appt.doctorId = :doctorId', { doctorId });
+      return qb;
+    };
 
     const [inProgress, waiting, completedToday] = await Promise.all([
-      this.db.repo(Appointment).findOne({
-        where: { tenantId, doctorId, status: AppointmentStatus.IN_PROGRESS },
-        relations: ['patient'],
-      }),
-      this.db.repo(Appointment).count({
-        where: {
-          tenantId, doctorId,
-          status: In([AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN]),
-        },
-      }),
-      this.db.qb(Appointment, 'appt')
-        .where('appt.tenantId = :tenantId', { tenantId })
-        .andWhere('appt.doctorId = :doctorId', { doctorId })
-        .andWhere('appt.status = :status', { status: AppointmentStatus.COMPLETED })
+      base()
+        .leftJoinAndSelect('appt.patient', 'patient')
+        .andWhere('appt.status = :s', { s: AppointmentStatus.IN_PROGRESS })
+        .getOne(),
+      base()
+        .andWhere('appt.status IN (:...s)', {
+          s: [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN],
+        })
+        .getCount(),
+      base()
+        .andWhere('appt.status = :s', { s: AppointmentStatus.COMPLETED })
         .andWhere('appt.completedAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay })
         .getCount(),
     ]);
 
-    return { inProgress, waiting, completedToday };
+    return {
+      currentPatient: inProgress,
+      waitingCount:   waiting,
+      completedCount: completedToday,
+      doctorId:       doctorId ?? 'all',
+    };
   }
 }

@@ -68,13 +68,14 @@ export class AppointmentsController {
   /** GET /appointments/queue/status — used by doctor-queue page */
   @Get('queue/status')
   @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
-  @ApiOperation({ summary: 'Get doctor queue status' })
+  @ApiOperation({ summary: 'Get queue status (doctor-scoped for DOCTOR; all for NURSE)' })
   getQueueStatus(
     @TenantId() tenantId: string,
     @CurrentUser() user: any,
     @Query('doctorId') doctorId?: string,
   ) {
-    const resolvedDoctorId = doctorId ?? user.sub;
+    // Nurses see the whole-day queue; doctors see only their own patients
+    const resolvedDoctorId = doctorId ?? (user.role === 'NURSE' ? null : user.sub);
     return this.svc.getQueueStatus(resolvedDoctorId, tenantId);
   }
 
@@ -86,21 +87,22 @@ export class AppointmentsController {
     @CurrentUser() user: any,
     @Query('doctorId') doctorId?: string,
   ) {
-    const resolvedDoctorId = doctorId ?? user.sub;
+    const resolvedDoctorId = doctorId ?? (user.role === 'NURSE' ? null : user.sub);
     return this.svc.getQueueStatus(resolvedDoctorId, tenantId);
   }
 
-  /** GET /appointments/doctor-queue — today's queue for the logged-in doctor */
+  /** GET /appointments/doctor-queue — today's queue for the logged-in doctor or nurse */
   @Get('doctor-queue')
   @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
-  @ApiOperation({ summary: "Get doctor's appointment queue for today" })
+  @ApiOperation({ summary: "Doctor: own queue. Nurse: full day's queue across all doctors." })
   getDoctorQueue(
     @TenantId() tenantId: string,
     @CurrentUser() user: any,
     @Query('doctorId') doctorId?: string,
     @Query('date') date?: string,
   ) {
-    const resolvedDoctorId = doctorId ?? user.sub;
+    // Nurses see every patient scheduled today (no doctor filter)
+    const resolvedDoctorId = doctorId ?? (user.role === 'NURSE' ? null : user.sub);
     return this.svc.findDoctorQueue(resolvedDoctorId, tenantId, date);
   }
 
