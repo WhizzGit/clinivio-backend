@@ -94,16 +94,16 @@ export class AppointmentsController {
   /** GET /appointments/doctor-queue — today's queue for the logged-in doctor or nurse */
   @Get('doctor-queue')
   @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
-  @ApiOperation({ summary: "Doctor: own queue. Nurse: full day's queue across all doctors." })
+  @ApiOperation({ summary: "Doctor: own queue. Nurse: IN_PROGRESS patients across all doctors." })
   getDoctorQueue(
     @TenantId() tenantId: string,
     @CurrentUser() user: any,
     @Query('doctorId') doctorId?: string,
     @Query('date') date?: string,
   ) {
-    // Nurses see every patient scheduled today (no doctor filter)
     const resolvedDoctorId = doctorId ?? (user.role === 'NURSE' ? null : user.sub);
-    return this.svc.findDoctorQueue(resolvedDoctorId, tenantId, date);
+    const statuses = user.role === 'NURSE' ? [AppointmentStatus.IN_PROGRESS] : undefined;
+    return this.svc.findDoctorQueue(resolvedDoctorId, tenantId, date, statuses);
   }
 
   // ─── Get by ID ───────────────────────────────────────────────────────────────
@@ -177,21 +177,21 @@ export class AppointmentsController {
   }
 
   @Post(':id/check-in')
-  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'DOCTOR')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR')
   @ApiOperation({ summary: 'Check in the patient (CONFIRMED → CHECKED_IN)' })
   checkIn(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.checkIn(id, tenantId);
   }
 
   @Post(':id/undo-check-in')
-  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'DOCTOR')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR')
   @ApiOperation({ summary: 'Reverse an accidental check-in (CHECKED_IN → CONFIRMED)' })
   undoCheckIn(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.undoCheckIn(id, tenantId);
   }
 
   @Post(':id/start')
-  @Roles('DOCTOR', 'NURSE')
+  @Roles('DOCTOR')
   @ApiOperation({ summary: 'Start consultation (CHECKED_IN → IN_PROGRESS)' })
   startConsultation(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.startConsultation(id, tenantId);
@@ -199,7 +199,7 @@ export class AppointmentsController {
 
   /** PATCH alias kept for REST API clients */
   @Patch(':id/start-consultation')
-  @Roles('DOCTOR', 'NURSE')
+  @Roles('DOCTOR')
   startConsultationPatch(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.startConsultation(id, tenantId);
   }

@@ -207,12 +207,10 @@ export class AppointmentsService {
    * Returns today's queue for a specific doctor, or the full-day queue for all
    * doctors when doctorId is null (used by nurses who assist any patient).
    */
-  async findDoctorQueue(doctorId: string | null, tenantId: string, date?: string) {
+  async findDoctorQueue(doctorId: string | null, tenantId: string, date?: string, statuses?: AppointmentStatus[]) {
     const target = date ? new Date(date) : new Date();
     const startOfDay = new Date(target); startOfDay.setHours(0, 0, 0, 0);
     const endOfDay   = new Date(target); endOfDay.setHours(23, 59, 59, 999);
-
-    const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];
 
     const qb = this.db
       .qb(Appointment, 'appt')
@@ -220,18 +218,26 @@ export class AppointmentsService {
       .leftJoinAndSelect('appt.slot', 'slot')
       .leftJoinAndSelect('appt.doctor', 'doctor')
       .where('appt.tenantId = :tenantId', { tenantId })
-      .andWhere(
+      .orderBy('appt.tokenNumber', 'ASC')
+      .addOrderBy('appt.createdAt', 'ASC');
+
+    if (statuses) {
+      // Nurse mode: exact status list, scoped to today
+      qb.andWhere('appt.status IN (:...statuses)', { statuses })
+        .andWhere('appt.createdAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+    } else {
+      // Doctor mode: active + today's completed
+      const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];
+      qb.andWhere(
         `(
           (appt.status IN (:...activeStatuses))
           OR
           (appt.status = :completed AND appt.completedAt BETWEEN :startOfDay AND :endOfDay)
         )`,
         { activeStatuses, completed: AppointmentStatus.COMPLETED, startOfDay, endOfDay },
-      )
-      .orderBy('appt.tokenNumber', 'ASC')
-      .addOrderBy('appt.createdAt', 'ASC');
+      );
+    }
 
-    // Doctors see only their own patients; nurses see the entire day's queue
     if (doctorId) {
       qb.andWhere('appt.doctorId = :doctorId', { doctorId });
     }
