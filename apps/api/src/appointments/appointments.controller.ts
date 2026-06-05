@@ -175,7 +175,7 @@ export class AppointmentsController {
   }
 
   @Post(':id/check-in')
-  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'DOCTOR')
   @ApiOperation({ summary: 'Check in the patient' })
   checkIn(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.checkIn(id, tenantId);
