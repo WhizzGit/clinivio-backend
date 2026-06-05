@@ -178,9 +178,16 @@ export class AppointmentsController {
 
   @Post(':id/check-in')
   @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'DOCTOR')
-  @ApiOperation({ summary: 'Check in the patient' })
+  @ApiOperation({ summary: 'Check in the patient (CONFIRMED → CHECKED_IN)' })
   checkIn(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.checkIn(id, tenantId);
+  }
+
+  @Post(':id/undo-check-in')
+  @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'DOCTOR')
+  @ApiOperation({ summary: 'Reverse an accidental check-in (CHECKED_IN → CONFIRMED)' })
+  undoCheckIn(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.svc.undoCheckIn(id, tenantId);
   }
 
   @Post(':id/start')

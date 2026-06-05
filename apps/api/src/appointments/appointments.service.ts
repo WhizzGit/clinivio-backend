@@ -249,6 +249,20 @@ export class AppointmentsService {
     return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
   }
 
+  /** Reverse an accidental check-in — CHECKED_IN → CONFIRMED */
+  async undoCheckIn(id: string, tenantId: string) {
+    const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
+    if (!appointment) throw new NotFoundException('Appointment not found');
+    if (appointment.status !== AppointmentStatus.CHECKED_IN) {
+      throw new BadRequestException('Only CHECKED_IN appointments can be reversed');
+    }
+    await this.db.repo(Appointment).update(id, {
+      status: AppointmentStatus.CONFIRMED,
+      checkedInAt: null as any,
+    });
+    return this.db.repo(Appointment).findOne({ where: { id }, relations: ['patient', 'doctor', 'slot', 'department'] });
+  }
+
   async startConsultation(id: string, tenantId: string) {
     const appointment = await this.db.repo(Appointment).findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException('Appointment not found');
