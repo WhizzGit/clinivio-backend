@@ -43,7 +43,7 @@ export class PharmacyController {
   }
 
   @Patch('orders/:id')
-  @Roles('ADMIN', 'RECEPTIONIST')
+  @Roles('ADMIN', 'RECEPTIONIST', 'PHARMACIST')
   @ApiOperation({ summary: 'Update pharmacy order status' })
   updateOrder(
     @Param('id') id: string,
@@ -75,14 +75,14 @@ export class PharmacyController {
   }
 
   @Get('inventory/low-stock')
-  @Roles('ADMIN', 'RECEPTIONIST')
+  @Roles('ADMIN', 'RECEPTIONIST', 'PHARMACIST')
   @ApiOperation({ summary: 'Get low stock items' })
   lowStock(@TenantId() tenantId: string) {
     return this.svc.getLowStockItems(tenantId);
   }
 
   @Get('inventory/expiring')
-  @Roles('ADMIN', 'RECEPTIONIST')
+  @Roles('ADMIN', 'RECEPTIONIST', 'PHARMACIST')
   @ApiOperation({ summary: 'Get items expiring soon' })
   expiring(
     @TenantId() tenantId: string,
@@ -99,7 +99,7 @@ export class PharmacyController {
   }
 
   @Patch('inventory/:id')
-  @Roles('ADMIN', 'RECEPTIONIST')
+  @Roles('ADMIN', 'RECEPTIONIST', 'PHARMACIST')
   @ApiOperation({ summary: 'Update inventory item' })
   updateItem(
     @Param('id') id: string,
@@ -112,7 +112,7 @@ export class PharmacyController {
   /** PATCH /pharmacy/inventory/:id/stock — adjust stock (delta or absolute qty) */
   @Patch('inventory/:id/stock')
   @Post('inventory/:id/adjust-stock')   // legacy alias
-  @Roles('ADMIN', 'RECEPTIONIST')
+  @Roles('ADMIN', 'RECEPTIONIST', 'PHARMACIST')
   @ApiOperation({ summary: 'Adjust stock quantity' })
   adjustStock(
     @Param('id') id: string,
