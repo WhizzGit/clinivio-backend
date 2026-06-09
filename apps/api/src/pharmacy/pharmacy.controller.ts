@@ -68,7 +68,7 @@ export class PharmacyController {
   }
 
   @Post('inventory')
-  @Roles('ADMIN', 'RECEPTIONIST')
+  @Roles('ADMIN', 'RECEPTIONIST', 'PHARMACIST')
   @ApiOperation({ summary: 'Create inventory item' })
   createItem(@TenantId() tenantId: string, @Body() dto: CreateInventoryItemDto) {
     return this.svc.createInventoryItem(tenantId, dto);

@@ -59,7 +59,7 @@ export class StatsController {
   }
 
   @Get('pharmacy')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'PHARMACIST')
   @ApiOperation({ summary: 'Get pharmacy statistics' })
   pharmacy(@TenantId() tenantId: string) {
     return this.svc.getPharmacyStats(tenantId);

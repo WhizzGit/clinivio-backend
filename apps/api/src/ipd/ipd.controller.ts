@@ -52,7 +52,7 @@ export class IpdController {
 
   @Post('admissions')
   @Post('admit')
-  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
   @ApiOperation({ summary: 'Admit a patient' })
   admit(@TenantId() tenantId: string, @Body() dto: AdmitPatientDto) {
     return this.svc.admitPatient(tenantId, dto);

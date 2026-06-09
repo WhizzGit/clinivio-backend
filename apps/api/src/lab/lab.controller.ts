@@ -34,21 +34,21 @@ export class LabController {
   }
 
   @Post('tests')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'LAB_TECHNICIAN')
   @ApiOperation({ summary: 'Create lab test' })
   createTest(@TenantId() tenantId: string, @Body() dto: CreateLabTestDto) {
     return this.svc.createTest(tenantId, dto);
   }
 
   @Get('tests/:id')
-  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE', 'LAB_TECHNICIAN')
   @ApiOperation({ summary: 'Get lab test by ID' })
   findTest(@Param('id') id: string, @TenantId() tenantId: string) {
     return this.svc.findTestById(id, tenantId);
   }
 
   @Patch('tests/:id')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'LAB_TECHNICIAN')
   @ApiOperation({ summary: 'Update lab test' })
   updateTest(
     @Param('id') id: string,
@@ -173,7 +173,7 @@ export class LabController {
   }
 
   @Get('analytics')
-  @Roles('ADMIN')
+  @Roles('ADMIN', 'LAB_TECHNICIAN', 'DOCTOR', 'NURSE')
   @ApiOperation({ summary: 'Get lab analytics' })
   analytics(
     @TenantId() tenantId: string,

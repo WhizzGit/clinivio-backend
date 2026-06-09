@@ -222,9 +222,9 @@ export class AppointmentsService {
       .addOrderBy('appt.createdAt', 'ASC');
 
     if (statuses) {
-      // Nurse mode: exact status list, scoped to today
+      // Nurse mode: exact status list, scoped to today's scheduled appointments
       qb.andWhere('appt.status IN (:...statuses)', { statuses })
-        .andWhere('appt.createdAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+        .andWhere('appt.scheduledAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
     } else {
       // Doctor mode: active + today's completed
       const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];
