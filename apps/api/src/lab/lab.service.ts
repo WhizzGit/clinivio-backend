@@ -167,7 +167,7 @@ export class LabService {
         sgstAmount: '0',
         igstAmount: '0',
         totalAmount: String(totalAmount),
-        paymentStatus: PaymentStatus.PENDING,
+        paymentStatus: 'PENDING' as any,
       }),
     );
 
