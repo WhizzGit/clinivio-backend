@@ -1,6 +1,6 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
-import { Patient, PatientFamily, TenantEntityManager, ILike } from '@mediflow/database';
+import { Patient, PatientFamily, Consultation, TenantEntityManager, ILike } from '@mediflow/database';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
@@ -190,8 +190,15 @@ export class PatientsService {
     return this.findById(id, tenantId);
   }
 
-  async getConsultationHistory(_patientId: string, _tenantId: string, _page = 1, _limit = 20) {
-    // Full implementation deferred to ConsultationService.getPatientConsultations
-    return [];
+  async getConsultationHistory(patientId: string, tenantId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data] = await this.db.repo(Consultation).findAndCount({
+      where: { patientId, tenantId },
+      relations: ['appointment', 'doctor', 'prescriptions', 'prescriptions.items'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+    return data;
   }
 }

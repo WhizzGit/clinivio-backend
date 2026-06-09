@@ -148,6 +148,13 @@ export class LabController {
     return this.svc.updateOrderStatus(id, tenantId, LabOrderStatus.COMPLETED);
   }
 
+  @Patch('orders/:id/cancel')
+  @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'LAB_TECHNICIAN')
+  @ApiOperation({ summary: 'Cancel a lab order' })
+  cancel(@Param('id') id: string, @TenantId() tenantId: string) {
+    return this.svc.updateOrderStatus(id, tenantId, LabOrderStatus.CANCELLED);
+  }
+
   @Patch('orders/:id/status')
   @Roles('ADMIN', 'RECEPTIONIST', 'NURSE', 'LAB_TECHNICIAN')
   @ApiOperation({ summary: 'Update lab order status (generic)' })

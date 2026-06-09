@@ -11,7 +11,6 @@ import {
   Invoice,
   LabOrderStatus,
   LabResultFlag,
-  PaymentStatus,
   TenantEntityManager,
   ILike,
 } from '@mediflow/database';
@@ -244,41 +243,103 @@ export class LabService {
   }
 
   async getAnalytics(tenantId: string, from?: string, to?: string) {
-    const qb = this.db.qb(LabOrder, 'lo').where('lo.tenantId = :tenantId', { tenantId });
-    if (from) qb.andWhere('lo.createdAt >= :from', { from: new Date(from) });
-    if (to) qb.andWhere('lo.createdAt <= :to', { to: new Date(to) });
+    const toDate = to ? new Date(to) : new Date();
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
 
-    const [totalOrders, byStatus, byPriority, pendingCount] = await Promise.all([
-      qb.getCount(),
-      this.db.qb(LabOrder, 'lo').select('lo.status', 'status').addSelect('COUNT(lo.id)', 'count')
-        .where('lo.tenantId = :tenantId', { tenantId }).groupBy('lo.status')
+    const [totalOrders, byStatus, todayOrders, avgRow, criticalItems, totalItems] = await Promise.all([
+      this.db.qb(LabOrder, 'lo')
+        .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', { tenantId, from: fromDate, to: toDate })
+        .getCount(),
+
+      this.db.qb(LabOrder, 'lo')
+        .select('lo.status', 'status').addSelect('COUNT(lo.id)', 'count')
+        .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', { tenantId, from: fromDate, to: toDate })
+        .groupBy('lo.status')
         .getRawMany<{ status: string; count: string }>(),
-      this.db.qb(LabOrder, 'lo').select('lo.priority', 'priority').addSelect('COUNT(lo.id)', 'count')
-        .where('lo.tenantId = :tenantId', { tenantId }).groupBy('lo.priority')
-        .getRawMany<{ priority: string; count: string }>(),
-      this.db.repo(LabOrder).count({ where: { tenantId, status: LabOrderStatus.PENDING } }),
+
+      this.db.qb(LabOrder, 'lo')
+        .where('lo.tenantId = :tenantId AND lo.createdAt >= :today', { tenantId, today })
+        .getCount(),
+
+      this.db.qb(LabOrder, 'lo')
+        .select('AVG(EXTRACT(EPOCH FROM (lo.completedAt - lo.createdAt)) / 3600)', 'avgHours')
+        .where('lo.tenantId = :tenantId AND lo.status = :status AND lo.completedAt IS NOT NULL AND lo.createdAt >= :from AND lo.createdAt <= :to', {
+          tenantId, status: LabOrderStatus.COMPLETED, from: fromDate, to: toDate,
+        })
+        .getRawOne<{ avgHours: string }>(),
+
+      this.db.qb(LabOrderItem, 'item')
+        .leftJoin('item.labOrder', 'lo')
+        .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to AND item.flag = :flag', {
+          tenantId, from: fromDate, to: toDate, flag: LabResultFlag.CRITICAL,
+        })
+        .getCount(),
+
+      this.db.qb(LabOrderItem, 'item')
+        .leftJoin('item.labOrder', 'lo')
+        .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', { tenantId, from: fromDate, to: toDate })
+        .getCount(),
     ]);
 
-    const topTests = await this.db
-      .qb(LabOrderItem, 'item')
-      .leftJoin('item.labOrder', 'order')
-      .leftJoinAndSelect('item.labTest', 'test')
-      .select('item.labTestId', 'labTestId')
-      .addSelect('test.name', 'testName')
-      .addSelect('COUNT(item.id)', 'count')
-      .where('order.tenantId = :tenantId', { tenantId })
-      .groupBy('item.labTestId')
-      .addGroupBy('test.name')
-      .orderBy('count', 'DESC')
-      .limit(10)
-      .getRawMany<{ labTestId: string; testName: string; count: string }>();
+    const completedOrders = Number(byStatus.find(r => r.status === LabOrderStatus.COMPLETED)?.count ?? 0);
+    const avgTurnaroundHours = Math.round(parseFloat(avgRow?.avgHours ?? '0') * 10) / 10;
+    const criticalRate = totalItems > 0 ? Math.round((criticalItems / totalItems) * 1000) / 10 : 0;
+
+    // Revenue from lab invoices in the period
+    const revenueRow = await this.db.qb(Invoice, 'inv')
+      .select('COALESCE(SUM(inv.totalAmount), 0)', 'total')
+      .where('inv.tenantId = :tenantId AND inv.invoiceType = :type AND inv.paymentStatus = :paid AND inv.createdAt >= :from AND inv.createdAt <= :to', {
+        tenantId, type: 'LAB', paid: 'PAID', from: fromDate, to: toDate,
+      })
+      .getRawOne<{ total: string }>();
+    const completedRevenue = parseFloat(revenueRow?.total ?? '0');
+
+    // Category breakdown: orderCount and revenue per test category
+    const categoryOrders = await this.db.qb(LabOrderItem, 'item')
+      .leftJoin('item.labOrder', 'lo')
+      .leftJoin('item.labTest', 'test')
+      .select('test.category', 'category')
+      .addSelect('COUNT(DISTINCT lo.id)', 'orderCount')
+      .addSelect('COALESCE(SUM(test.price), 0)', 'revenue')
+      .where('lo.tenantId = :tenantId AND lo.createdAt >= :from AND lo.createdAt <= :to', { tenantId, from: fromDate, to: toDate })
+      .groupBy('test.category')
+      .getRawMany<{ category: string; orderCount: string; revenue: string }>();
+
+    const categoryTests = await this.db.qb(LabTest, 'test')
+      .select('test.category', 'category')
+      .addSelect('COUNT(test.id)', 'testCount')
+      .addSelect('SUM(CASE WHEN test.isActive THEN 1 ELSE 0 END)', 'activeTests')
+      .where('test.tenantId = :tenantId', { tenantId })
+      .groupBy('test.category')
+      .getRawMany<{ category: string; testCount: string; activeTests: string }>();
+
+    const categoryBreakdown: Record<string, { orderCount: number; revenue: number; testCount: number; activeTests: number }> = {};
+    for (const row of categoryTests) {
+      categoryBreakdown[row.category] = {
+        orderCount: 0, revenue: 0,
+        testCount: Number(row.testCount),
+        activeTests: Number(row.activeTests),
+      };
+    }
+    for (const row of categoryOrders) {
+      if (!categoryBreakdown[row.category]) {
+        categoryBreakdown[row.category] = { orderCount: 0, revenue: 0, testCount: 0, activeTests: 0 };
+      }
+      categoryBreakdown[row.category].orderCount = Number(row.orderCount);
+      categoryBreakdown[row.category].revenue = parseFloat(row.revenue);
+    }
 
     return {
+      period: 30,
       totalOrders,
-      pendingCount,
-      byStatus: byStatus.map((r) => ({ status: r.status, count: Number(r.count) })),
-      byPriority: byPriority.map((r) => ({ priority: r.priority, count: Number(r.count) })),
-      topTests: topTests.map((r) => ({ labTestId: r.labTestId, testName: r.testName, count: Number(r.count) })),
+      completedOrders,
+      todayOrders,
+      completedRevenue,
+      avgTurnaroundHours,
+      criticalItems,
+      criticalRate,
+      categoryBreakdown,
     };
   }
 }

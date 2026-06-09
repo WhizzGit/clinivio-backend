@@ -370,35 +370,97 @@ export class StatsService {
   }
 
   async getPharmacyStats(tenantId: string) {
-    const [byStatus, lowStock, expiryCount] = await Promise.all([
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const in90Days = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const [
+      inventoryRows,
+      lowStockRows,
+      expiringSoonRows,
+      categoryRows,
+      dispensedToday,
+      dispensedMTD,
+      pendingOrders,
+      revenueRow,
+    ] = await Promise.all([
+      this.db.qb(PharmacyInventory, 'inv')
+        .select('COUNT(inv.id)', 'totalItems')
+        .addSelect('COALESCE(SUM(inv.stockQty * inv.sellingPrice), 0)', 'inventoryValue')
+        .where('inv.tenantId = :tenantId AND inv.isActive = true', { tenantId })
+        .getRawOne<{ totalItems: string; inventoryValue: string }>(),
+
+      this.db.qb(PharmacyInventory, 'inv')
+        .select('COUNT(inv.id)', 'count')
+        .addSelect('COALESCE(SUM(inv.stockQty * inv.sellingPrice::numeric), 0)', 'value')
+        .where('inv.tenantId = :tenantId AND inv.isActive = true AND inv.stockQty <= inv.reorderLevel', { tenantId })
+        .getRawOne<{ count: string; value: string }>(),
+
+      this.db.qb(PharmacyInventory, 'inv')
+        .select('COUNT(inv.id)', 'count')
+        .addSelect('COALESCE(SUM(inv.stockQty * inv.sellingPrice::numeric), 0)', 'value')
+        .where('inv.tenantId = :tenantId AND inv.isActive = true AND inv.expiryDate IS NOT NULL AND inv.expiryDate <= :future', {
+          tenantId, future: in90Days,
+        })
+        .getRawOne<{ count: string; value: string }>(),
+
+      this.db.qb(PharmacyInventory, 'inv')
+        .select("COALESCE(inv.category, 'Uncategorized')", 'category')
+        .addSelect('COUNT(inv.id)', 'count')
+        .addSelect('COALESCE(SUM(inv.stockQty * inv.sellingPrice::numeric), 0)', 'value')
+        .where('inv.tenantId = :tenantId AND inv.isActive = true', { tenantId })
+        .groupBy('inv.category')
+        .getRawMany<{ category: string; count: string; value: string }>(),
+
       this.db.qb(PharmacyOrder, 'po')
-        .select('po.status', 'status')
-        .addSelect('COUNT(po.id)', 'count')
-        .where('po.tenantId = :tenantId', { tenantId })
-        .groupBy('po.status')
-        .getRawMany<{ status: string; count: string }>(),
-
-      this.db.qb(PharmacyInventory, 'inv')
-        .where('inv.tenantId = :tenantId', { tenantId })
-        .andWhere('inv.isActive = true')
-        .andWhere('inv.stockQty <= inv.reorderLevel')
-        .getCount(),
-
-      this.db.qb(PharmacyInventory, 'inv')
-        .where('inv.tenantId = :tenantId', { tenantId })
-        .andWhere('inv.isActive = true')
-        .andWhere('inv.expiryDate IS NOT NULL')
-        .andWhere('inv.expiryDate <= :future', {
-          future: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        .where('po.tenantId = :tenantId AND po.status = :status AND po.dispensedAt >= :today', {
+          tenantId, status: PharmacyOrderStatus.DISPENSED, today,
         })
         .getCount(),
+
+      this.db.qb(PharmacyOrder, 'po')
+        .where('po.tenantId = :tenantId AND po.status = :status AND po.dispensedAt >= :monthStart', {
+          tenantId, status: PharmacyOrderStatus.DISPENSED, monthStart,
+        })
+        .getCount(),
+
+      this.db.qb(PharmacyOrder, 'po')
+        .where('po.tenantId = :tenantId AND po.status = :status', {
+          tenantId, status: PharmacyOrderStatus.PENDING,
+        })
+        .getCount(),
+
+      this.db.qb(Invoice, 'inv')
+        .select('COALESCE(SUM(inv.totalAmount), 0)', 'total')
+        .where('inv.tenantId = :tenantId AND inv.invoiceType = :type AND inv.paymentStatus = :paid AND inv.paidAt >= :monthStart', {
+          tenantId, type: 'PHARMACY', paid: 'PAID', monthStart,
+        })
+        .getRawOne<{ total: string }>(),
     ]);
 
+    const categoryBreakdown: Record<string, { count: number; value: number }> = {};
+    for (const row of categoryRows) {
+      categoryBreakdown[row.category ?? 'Uncategorized'] = {
+        count: Number(row.count),
+        value: parseFloat(row.value),
+      };
+    }
+
     return {
-      orders: byStatus.map((r) => ({ status: r.status, count: Number(r.count) })),
       inventory: {
-        lowStockItems: lowStock,
-        expiringIn30Days: expiryCount,
+        totalItems: Number(inventoryRows?.totalItems ?? 0),
+        inventoryValue: parseFloat(inventoryRows?.inventoryValue ?? '0'),
+        lowStockCount: Number(lowStockRows?.count ?? 0),
+        lowStockValue: parseFloat(lowStockRows?.value ?? '0'),
+        expiringSoonCount: Number(expiringSoonRows?.count ?? 0),
+        expiringSoonValue: parseFloat(expiringSoonRows?.value ?? '0'),
+        categoryBreakdown,
+      },
+      orders: {
+        dispensedToday,
+        dispensedMTD,
+        pending: pendingOrders,
+        revenueMTD: parseFloat(revenueRow?.total ?? '0'),
       },
     };
   }
