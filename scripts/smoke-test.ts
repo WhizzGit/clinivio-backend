@@ -298,7 +298,13 @@ async function suiteDoctor(api: AxiosInstance) {
 }
 
 async function suiteNurse(api: AxiosInstance) {
-  // ── Queue accessible ────────────────────────────────────────────────────────
+  // ── Doctor queue (nurse sees all active patients today) ─────────────────────
+  await test('GET /appointments/doctor-queue (nurse) → array', async () => {
+    const { data } = await api.get('/appointments/doctor-queue');
+    assertArray(data, 'doctor-queue');
+  });
+
+  // ── General queue accessible ────────────────────────────────────────────────
   await test('GET /appointments/queue (nurse) → accessible', async () => {
     const { data } = await api.get('/appointments/queue');
     assertDefined(data, 'queue');

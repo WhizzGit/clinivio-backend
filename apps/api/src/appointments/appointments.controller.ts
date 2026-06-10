@@ -94,7 +94,7 @@ export class AppointmentsController {
   /** GET /appointments/doctor-queue — today's queue for the logged-in doctor or nurse */
   @Get('doctor-queue')
   @Roles('ADMIN', 'RECEPTIONIST', 'DOCTOR', 'NURSE')
-  @ApiOperation({ summary: "Doctor: own queue. Nurse: IN_PROGRESS patients across all doctors." })
+  @ApiOperation({ summary: "Doctor: own queue. Nurse: all active patients across all doctors today." })
   getDoctorQueue(
     @TenantId() tenantId: string,
     @CurrentUser() user: any,
@@ -102,7 +102,9 @@ export class AppointmentsController {
     @Query('date') date?: string,
   ) {
     const resolvedDoctorId = doctorId ?? (user.role === 'NURSE' ? null : user.sub);
-    const statuses = user.role === 'NURSE' ? [AppointmentStatus.IN_PROGRESS] : undefined;
+    const statuses = user.role === 'NURSE'
+      ? [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS]
+      : undefined;
     return this.svc.findDoctorQueue(resolvedDoctorId, tenantId, date, statuses);
   }
 

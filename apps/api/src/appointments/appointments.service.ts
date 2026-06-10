@@ -9,9 +9,11 @@ import {
   Appointment,
   DoctorSlot,
   PharmacyOrder,
+  Invoice,
   AppointmentStatus,
   AppointmentType,
   PaymentStatus,
+  InvoiceType,
   PharmacyOrderStatus,
   TenantEntityManager,
   In,
@@ -108,13 +110,50 @@ export class AppointmentsService {
       throw new BadRequestException('Cannot confirm payment for cancelled appointment');
     }
 
+    const now = new Date();
     await this.db.repo(Appointment).update(id, {
       paymentStatus: PaymentStatus.PAID,
       paymentAmount: String(amount),
       razorpayPaymentId: razorpayPaymentId ?? null,
       status: AppointmentStatus.CONFIRMED,
-      confirmedAt: new Date(),
+      confirmedAt: now,
     });
+
+    // Create or update the consultation invoice so revenue stats are accurate
+    const existingInvoice = await this.db.repo(Invoice).findOne({
+      where: { appointmentId: id, tenantId, invoiceType: InvoiceType.CONSULTATION },
+    });
+    if (existingInvoice) {
+      await this.db.repo(Invoice).update(existingInvoice.id, {
+        paymentStatus: PaymentStatus.PAID,
+        paymentMethod: paymentMethod ?? null,
+        paidAt: now,
+        totalAmount: String(amount),
+      });
+    } else {
+      const invoiceCount = await this.db.repo(Invoice).count({ where: { tenantId } });
+      const invoiceNumber = `INV-OPD-${String(invoiceCount + 1).padStart(6, '0')}`;
+      await this.db.repo(Invoice).save(
+        this.db.repo(Invoice).create({
+          tenantId,
+          patientId: appointment.patientId,
+          appointmentId: id,
+          invoiceNumber,
+          invoiceType: InvoiceType.CONSULTATION,
+          lineItems: [{ description: 'Consultation Fee', amount }],
+          subtotal: String(amount),
+          discountAmount: '0',
+          taxableAmount: String(amount),
+          cgstAmount: '0',
+          sgstAmount: '0',
+          igstAmount: '0',
+          totalAmount: String(amount),
+          paymentStatus: PaymentStatus.PAID,
+          paymentMethod: paymentMethod ?? null,
+          paidAt: now,
+        }),
+      );
+    }
 
     return this.db.repo(Appointment).findOne({
       where: { id },
@@ -222,9 +261,9 @@ export class AppointmentsService {
       .addOrderBy('appt.createdAt', 'ASC');
 
     if (statuses) {
-      // Nurse mode: exact status list, scoped to today's scheduled appointments
+      // Nurse mode: all active statuses today (use createdAt — walk-ins have no scheduledAt)
       qb.andWhere('appt.status IN (:...statuses)', { statuses })
-        .andWhere('appt.scheduledAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+        .andWhere('appt.createdAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
     } else {
       // Doctor mode: active + today's completed
       const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];

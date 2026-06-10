@@ -7,7 +7,10 @@ import {
   PharmacyOrder,
   PharmacyInventory,
   Appointment,
+  Invoice,
   PharmacyOrderStatus,
+  InvoiceType,
+  PaymentStatus,
   TenantEntityManager,
   ILike,
 } from '@mediflow/database';
@@ -103,12 +106,60 @@ export class PharmacyService {
     const order = await this.db.repo(PharmacyOrder).findOne({ where: { id, tenantId } });
     if (!order) throw new NotFoundException('Pharmacy order not found');
 
+    const now = new Date();
     const updates: Partial<PharmacyOrder> = {};
     if (dto.status) updates.status = dto.status;
     if (dto.dispenserNotes !== undefined) updates.dispenserNotes = dto.dispenserNotes;
-    if (dto.status === PharmacyOrderStatus.DISPENSED) updates.dispensedAt = new Date();
+    if (dto.status === PharmacyOrderStatus.DISPENSED) updates.dispensedAt = now;
 
     await this.db.repo(PharmacyOrder).update(id, updates);
+
+    // When dispensed, create a PHARMACY invoice so revenue stats reflect the sale
+    if (dto.status === PharmacyOrderStatus.DISPENSED) {
+      const existing = await this.db.repo(Invoice).findOne({
+        where: { appointmentId: order.appointmentId, tenantId, invoiceType: InvoiceType.PHARMACY },
+      });
+      if (!existing) {
+        // Try to compute total from prescription items × inventory prices
+        let totalAmount = 0;
+        try {
+          const appt = await this.db.repo(Appointment).findOne({
+            where: { id: order.appointmentId, tenantId },
+            relations: ['consultation', 'consultation.prescriptions', 'consultation.prescriptions.items'],
+          });
+          const items = appt?.consultation?.prescriptions?.[0]?.items ?? [];
+          for (const item of items) {
+            const inv = await this.db.repo(PharmacyInventory).findOne({
+              where: { tenantId, name: ILike(item.medicineName), isActive: true },
+            });
+            if (inv) totalAmount += parseFloat(inv.sellingPrice) * (item.quantity || 1);
+          }
+        } catch { /* ignore — use 0 if price lookup fails */ }
+
+        const invoiceCount = await this.db.repo(Invoice).count({ where: { tenantId } });
+        const invoiceNumber = `INV-PHR-${String(invoiceCount + 1).padStart(6, '0')}`;
+        await this.db.repo(Invoice).save(
+          this.db.repo(Invoice).create({
+            tenantId,
+            patientId: order.patientId,
+            appointmentId: order.appointmentId,
+            invoiceNumber,
+            invoiceType: InvoiceType.PHARMACY,
+            lineItems: [{ description: 'Pharmacy Dispensing', amount: totalAmount }],
+            subtotal: String(totalAmount),
+            discountAmount: '0',
+            taxableAmount: String(totalAmount),
+            cgstAmount: '0',
+            sgstAmount: '0',
+            igstAmount: '0',
+            totalAmount: String(totalAmount),
+            paymentStatus: PaymentStatus.PAID,
+            paidAt: now,
+          }),
+        );
+      }
+    }
+
     return this.findOrderById(id, tenantId);
   }
 
