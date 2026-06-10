@@ -10,7 +10,8 @@
     "db:seed": "ts-node -r tsconfig-paths/register libs/database/src/seed.ts",
     "docker:dev": "docker-compose up -d",
     "docker:down": "docker-compose down",
-    "typeorm": "typeorm-ts-node-commonjs -d apps/api/src/config/datasource.ts"
+    "typeorm": "typeorm-ts-node-commonjs -d apps/api/src/config/datasource.ts",
+    "smoke": "ts-node --project scripts/tsconfig.json scripts/smoke-test.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
