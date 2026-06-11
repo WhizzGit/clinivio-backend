@@ -13,8 +13,11 @@ import {
   DischargeSummary,
   Bed,
   Room,
+  Invoice,
   BedStatus,
   IPDAdmissionStatus,
+  InvoiceType,
+  PaymentStatus,
   TenantEntityManager,
 } from '@mediflow/database';
 
@@ -31,7 +34,7 @@ export class AdmitPatientDto {
 }
 
 export class AddVitalSnapshotDto {
-  recordedById: string;
+  recordedById?: string;
   bpSystolic?: number;
   bpDiastolic?: number;
   pulseRate?: number;
@@ -45,14 +48,14 @@ export class AddVitalSnapshotDto {
 }
 
 export class AddTreatmentDto {
-  orderedById: string;
+  orderedById?: string;
   treatmentName: string;
   instructions?: string;
   notes?: string;
 }
 
 export class AddProcedureDto {
-  performedById: string;
+  performedById?: string;
   procedureName: string;
   notes?: string;
   outcomes?: string;
@@ -61,7 +64,7 @@ export class AddProcedureDto {
 }
 
 export class SaveDischargeAdviceDto {
-  createdById: string;
+  createdById?: string;
   medications?: string;
   dietAdvice?: string;
   activityAdvice?: string;
@@ -72,7 +75,7 @@ export class SaveDischargeAdviceDto {
 }
 
 export class SaveDischargeSummaryDto {
-  generatedById: string;
+  generatedById?: string;
   finalDiagnosis: string;
   presentingComplaints: string;
   treatmentSummary: string;
@@ -130,6 +133,31 @@ export class IpdService {
       );
 
       await bedRepo.update(dto.bedId, { status: BedStatus.OCCUPIED });
+
+      // Create a pending admission invoice so billing counter can collect payment
+      const invoiceCount = await em.getRepository(Invoice).count({ where: { tenantId } });
+      const invoiceNumber = `INV-IPD-${String(invoiceCount + 1).padStart(6, '0')}`;
+      await em.getRepository(Invoice).save(
+        em.getRepository(Invoice).create({
+          tenantId,
+          patientId: dto.patientId,
+          ipdAdmissionId: admission.id,
+          appointmentId: dto.appointmentId ?? null,
+          invoiceNumber,
+          invoiceType: InvoiceType.PACKAGE,
+          lineItems: [{ description: 'IPD Admission — Bed & Service Charges', amount: 0 }],
+          subtotal: '0',
+          discountAmount: '0',
+          taxableAmount: '0',
+          cgstAmount: '0',
+          sgstAmount: '0',
+          igstAmount: '0',
+          totalAmount: '0',
+          paymentStatus: PaymentStatus.PENDING,
+          notes: `Admission: ${admissionNumber}`,
+        }),
+      );
+
       return this.loadAdmission(admission.id);
     });
   }
@@ -158,6 +186,14 @@ export class IpdService {
     const admission = await this.loadAdmission(id);
     if (!admission || admission.tenantId !== tenantId) throw new NotFoundException('Admission not found');
     return admission;
+  }
+
+  async markReadyForDischarge(id: string, tenantId: string) {
+    const admission = await this.db.repo(IPDAdmission).findOne({ where: { id, tenantId } });
+    if (!admission) throw new NotFoundException('Admission not found');
+    if (admission.status === IPDAdmissionStatus.DISCHARGED) throw new BadRequestException('Patient already discharged');
+    await this.db.repo(IPDAdmission).update(id, { status: IPDAdmissionStatus.READY_FOR_DISCHARGE });
+    return this.loadAdmission(id);
   }
 
   async dischargePatient(id: string, tenantId: string) {

@@ -29,8 +29,9 @@ export class LabController {
     @TenantId() tenantId: string,
     @Query('q') q?: string,
     @Query('category') category?: string,
+    @Query('all') all?: string,
   ) {
-    return this.svc.findTests(tenantId, q, category);
+    return this.svc.findTests(tenantId, q, category, all === 'true');
   }
 
   @Post('tests')
@@ -53,7 +54,7 @@ export class LabController {
   updateTest(
     @Param('id') id: string,
     @TenantId() tenantId: string,
-    @Body() dto: Partial<CreateLabTestDto>,
+    @Body() dto: Partial<CreateLabTestDto> & { isActive?: boolean },
   ) {
     return this.svc.updateTest(id, tenantId, dto);
   }

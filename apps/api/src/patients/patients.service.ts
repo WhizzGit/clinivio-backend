@@ -1,6 +1,6 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
-import { Patient, PatientFamily, Consultation, TenantEntityManager, ILike } from '@mediflow/database';
+import { Patient, PatientFamily, Consultation, LabOrder, TenantEntityManager, ILike, In } from '@mediflow/database';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
@@ -192,13 +192,33 @@ export class PatientsService {
 
   async getConsultationHistory(patientId: string, tenantId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
-    const [data] = await this.db.repo(Consultation).findAndCount({
+    const [consultations] = await this.db.repo(Consultation).findAndCount({
       where: { patientId, tenantId },
       relations: ['appointment', 'doctor', 'prescriptions', 'prescriptions.items'],
       order: { createdAt: 'DESC' },
       skip,
       take: limit,
     });
-    return data;
+
+    const apptIds = consultations.map(c => c.appointmentId).filter(Boolean) as string[];
+    if (!apptIds.length) return consultations;
+
+    const labOrders = await this.db.repo(LabOrder).find({
+      where: { tenantId, appointmentId: In(apptIds) },
+      relations: ['items', 'items.labTest'],
+      order: { createdAt: 'DESC' },
+    });
+
+    const ordersMap = new Map<string, typeof labOrders>();
+    for (const order of labOrders) {
+      if (!order.appointmentId) continue;
+      if (!ordersMap.has(order.appointmentId)) ordersMap.set(order.appointmentId, []);
+      ordersMap.get(order.appointmentId)!.push(order);
+    }
+
+    return consultations.map(c => ({
+      ...c,
+      labOrders: ordersMap.get(c.appointmentId!) ?? [],
+    }));
   }
 }

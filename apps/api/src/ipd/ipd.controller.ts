@@ -4,7 +4,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard, Roles, TenantId } from '@mediflow/shared';
+import { RolesGuard, Roles, TenantId, CurrentUser } from '@mediflow/shared';
 import {
   IpdService,
   AdmitPatientDto,
@@ -75,8 +75,7 @@ export class IpdController {
   @Roles('ADMIN', 'DOCTOR', 'NURSE')
   @ApiOperation({ summary: 'Mark patient as ready for discharge' })
   readyForDischarge(@Param('id') id: string, @TenantId() tenantId: string) {
-    // Uses the dischargePatient flow; caller should follow up with full discharge
-    return this.svc.findById(id, tenantId);
+    return this.svc.markReadyForDischarge(id, tenantId);
   }
 
   // ─── Discharge ─────────────────────────────────────────────────────────────
@@ -99,8 +98,10 @@ export class IpdController {
   addVitals(
     @Param('id') id: string,
     @TenantId() tenantId: string,
+    @CurrentUser() user: any,
     @Body() dto: AddVitalSnapshotDto,
   ) {
+    dto.recordedById = dto.recordedById ?? user.sub;
     return this.svc.addVitalSnapshot(id, tenantId, dto);
   }
 
@@ -121,8 +122,10 @@ export class IpdController {
   addTreatment(
     @Param('id') id: string,
     @TenantId() tenantId: string,
+    @CurrentUser() user: any,
     @Body() dto: AddTreatmentDto,
   ) {
+    dto.orderedById = dto.orderedById ?? user.sub;
     return this.svc.addTreatment(id, tenantId, dto);
   }
 
@@ -157,8 +160,10 @@ export class IpdController {
   addProcedure(
     @Param('id') id: string,
     @TenantId() tenantId: string,
+    @CurrentUser() user: any,
     @Body() dto: AddProcedureDto,
   ) {
+    dto.performedById = dto.performedById ?? user.sub;
     return this.svc.addProcedure(id, tenantId, dto);
   }
 
@@ -191,8 +196,10 @@ export class IpdController {
   saveDischargeAdvice(
     @Param('id') id: string,
     @TenantId() tenantId: string,
+    @CurrentUser() user: any,
     @Body() dto: SaveDischargeAdviceDto,
   ) {
+    dto.createdById = dto.createdById ?? user.sub;
     return this.svc.saveDischargeAdvice(id, tenantId, dto);
   }
 
@@ -203,8 +210,10 @@ export class IpdController {
   saveDischargeSummary(
     @Param('id') id: string,
     @TenantId() tenantId: string,
+    @CurrentUser() user: any,
     @Body() dto: SaveDischargeSummaryDto,
   ) {
+    dto.generatedById = dto.generatedById ?? user.sub;
     return this.svc.saveDischargeSummary(id, tenantId, dto);
   }
 }

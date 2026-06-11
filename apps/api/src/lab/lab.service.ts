@@ -79,18 +79,19 @@ export class LabService {
     );
   }
 
-  async findTests(tenantId: string, q?: string, category?: string) {
+  async findTests(tenantId: string, q?: string, category?: string, all = false) {
+    const activeFilter = all ? {} : { isActive: true };
     if (q) {
       return this.db.repo(LabTest).find({
         where: [
-          { tenantId, isActive: true, name: ILike(`%${q}%`) },
-          { tenantId, isActive: true, code: ILike(`%${q}%`) },
-          { tenantId, isActive: true, category: ILike(`%${q}%`) },
+          { tenantId, ...activeFilter, name: ILike(`%${q}%`) },
+          { tenantId, ...activeFilter, code: ILike(`%${q}%`) },
+          { tenantId, ...activeFilter, category: ILike(`%${q}%`) },
         ],
         order: { name: 'ASC' },
       });
     }
-    const where: any = { tenantId, isActive: true };
+    const where: any = { tenantId, ...activeFilter };
     if (category) where.category = category;
     return this.db.repo(LabTest).find({ where, order: { name: 'ASC' } });
   }
@@ -101,7 +102,7 @@ export class LabService {
     return test;
   }
 
-  async updateTest(id: string, tenantId: string, dto: Partial<CreateLabTestDto>) {
+  async updateTest(id: string, tenantId: string, dto: Partial<CreateLabTestDto> & { isActive?: boolean }) {
     await this.findTestById(id, tenantId);
     const updates: Partial<LabTest> = {};
     if (dto.name !== undefined) updates.name = dto.name;
@@ -110,6 +111,7 @@ export class LabService {
     if (dto.normalRange !== undefined) updates.normalRange = dto.normalRange;
     if (dto.price !== undefined) updates.price = String(dto.price);
     if (dto.turnaround !== undefined) updates.turnaround = dto.turnaround;
+    if (dto.isActive !== undefined) updates.isActive = dto.isActive;
     await this.db.repo(LabTest).update(id, updates);
     return this.db.repo(LabTest).findOne({ where: { id } });
   }

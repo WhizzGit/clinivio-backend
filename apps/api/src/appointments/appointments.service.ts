@@ -265,16 +265,10 @@ export class AppointmentsService {
       qb.andWhere('appt.status IN (:...statuses)', { statuses })
         .andWhere('appt.createdAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
     } else {
-      // Doctor mode: active + today's completed
-      const activeStatuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS];
-      qb.andWhere(
-        `(
-          (appt.status IN (:...activeStatuses))
-          OR
-          (appt.status = :completed AND appt.completedAt BETWEEN :startOfDay AND :endOfDay)
-        )`,
-        { activeStatuses, completed: AppointmentStatus.COMPLETED, startOfDay, endOfDay },
-      );
+      // Doctor mode: ALL of today's appointments except cancelled/no-show
+      const excludedStatuses = [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW];
+      qb.andWhere('appt.status NOT IN (:...excludedStatuses)', { excludedStatuses })
+        .andWhere('appt.createdAt BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
     }
 
     if (doctorId) {

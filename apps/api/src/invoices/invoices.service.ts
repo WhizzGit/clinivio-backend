@@ -32,6 +32,7 @@ export class CreateInvoiceDto {
 
 export class ConfirmPaymentDto {
   paymentMethod: string;
+  amount?: number;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
 }
@@ -164,13 +165,19 @@ export class InvoicesService {
     if (invoice.paymentStatus === PaymentStatus.PAID) throw new BadRequestException('Invoice already paid');
     if (invoice.paymentStatus === PaymentStatus.REFUNDED) throw new BadRequestException('Cannot pay a refunded invoice');
 
-    await this.db.repo(Invoice).update(id, {
+    const updateData: Partial<Invoice> = {
       paymentStatus: PaymentStatus.PAID,
       paymentMethod: dto.paymentMethod,
       razorpayOrderId: dto.razorpayOrderId ?? null,
       razorpayPaymentId: dto.razorpayPaymentId ?? null,
       paidAt: new Date(),
-    });
+    };
+    if (dto.amount !== undefined) {
+      updateData.totalAmount = String(dto.amount);
+      updateData.subtotal = String(dto.amount);
+      updateData.taxableAmount = String(dto.amount);
+    }
+    await this.db.repo(Invoice).update(id, updateData);
 
     return this.findById(id, tenantId);
   }
