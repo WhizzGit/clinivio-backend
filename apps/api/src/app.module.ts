@@ -42,6 +42,9 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
 // Analytics
 import { StatsModule } from './stats/stats.module';
 
+// Patient Portal
+import { PatientPortalModule } from './patient-portal/patient-portal.module';
+
 @Module({
   imports: [
     // ── Configuration (global) ──────────────────────────────────────────────────
@@ -126,6 +129,9 @@ import { StatsModule } from './stats/stats.module';
 
     // ── Analytics ────────────────────────────────────────────────────────────────
     StatsModule,
+
+    // ── Patient Portal ────────────────────────────────────────────────────────────
+    PatientPortalModule,
   ],
 })
 export class AppModule implements NestModule {

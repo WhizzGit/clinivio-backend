@@ -6,6 +6,7 @@ export * from './doctor-profile.entity';
 export * from './staff-profile.entity';
 export * from './patient-family.entity';
 export * from './patient.entity';
+export * from './patient-account.entity';
 export * from './doctor-slot.entity';
 export * from './appointment.entity';
 export * from './consultation.entity';
@@ -25,6 +26,7 @@ import { DoctorProfile } from './doctor-profile.entity';
 import { StaffProfile } from './staff-profile.entity';
 import { PatientFamily } from './patient-family.entity';
 import { Patient } from './patient.entity';
+import { PatientAccount } from './patient-account.entity';
 import { DoctorSlot } from './doctor-slot.entity';
 import { Appointment } from './appointment.entity';
 import { Consultation } from './consultation.entity';
@@ -40,7 +42,7 @@ import {
 import { LabTest, LabOrder, LabOrderItem } from './lab.entity';
 
 export const ALL_ENTITIES = [
-  Tenant, User, Department, DoctorProfile, StaffProfile, PatientFamily, Patient,
+  Tenant, User, Department, DoctorProfile, StaffProfile, PatientFamily, Patient, PatientAccount,
   DoctorSlot, Appointment, Consultation, Prescription, PrescriptionItem,
   FollowUp, PharmacyOrder, PharmacyInventory, Invoice, NotificationLog,
   Room, Bed, IPDAdmission, IPDVitalSnapshot, IPDTreatment, IPDProcedure,
