@@ -9,14 +9,12 @@ import {
   HttpCode,
   HttpStatus,
 } from "@nestjs/common";
-import { JwtAuthGuard } from "../auth/jwt-auth.guard";
-import { RolesGuard } from "../auth/roles.guard";
-import { Roles } from "../auth/roles.decorator";
-import { TenantId } from "../auth/tenant-id.decorator";
+import { AuthGuard } from "@nestjs/passport";
+import { RolesGuard, Roles, TenantId } from "@mediflow/shared";
 import { AiService } from "./ai.service";
 
 @Controller("patients")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(AuthGuard("jwt"), RolesGuard)
 export class AiController {
   constructor(private readonly svc: AiService) {}
 
@@ -37,7 +35,7 @@ export class AiController {
     return this.svc.getSummary(
       patientId,
       tenantId,
-      req.user?.userId ?? req.user?.id,
+      req.user?.sub ?? req.user?.id,
       refresh === "true",
     );
   }

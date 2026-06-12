@@ -161,7 +161,7 @@ export class AiService {
       if (c.spo2) vitals.spo2 = c.spo2;
       if (c.weightKg) vitals.weightKg = Number(c.weightKg);
       if (c.bmi) vitals.bmi = Number(c.bmi);
-      if (c.rbsMgDl) vitals.rbsMgDl = c.rbsMgDl;
+      if (c.rbsMgDl) vitals.rbsMgDl = Number(c.rbsMgDl);
 
       return {
         daysAgo,
