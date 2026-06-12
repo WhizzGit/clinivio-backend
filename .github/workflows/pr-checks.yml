@@ -1,0 +1,119 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. TypeScript typecheck ─────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared libs
+        run: |
+          pnpm --filter @mediflow/database build
+          pnpm --filter @mediflow/shared build
+
+      - name: Typecheck API
+        working-directory: apps/api
+        run: pnpm typecheck
+
+  # ── 2. Lint ─────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --filter @mediflow/api lint
+
+  # ── 3. Unit tests (no DB required) ─────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests with coverage
+        working-directory: apps/api
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost/test
+          JWT_SECRET: ci-test-secret
+          JWT_REFRESH_SECRET: ci-test-refresh-secret
+        run: pnpm test:cov
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: apps/api/coverage/
+
+  # ── 4. Frontend build check (patient portal) ───────────────────────────────
+  # Runs against clinivio-frontend repo — only if it shares this GitHub org.
+  # Comment out this job if frontend lives in a separate repo.
+  #
+  # frontend-build:
+  #   name: Frontend Build
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         repository: ${{ github.repository_owner }}/clinivio-frontend
+  #         token: ${{ secrets.GH_PAT }}
+  #     - uses: pnpm/action-setup@v3
+  #       with:
+  #         version: 8
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 20
+  #         cache: pnpm
+  #     - run: pnpm install --frozen-lockfile
+  #     - run: pnpm --filter clinivio-patient-portal build
+  #       env:
+  #         NEXT_PUBLIC_API_URL: https://example.com

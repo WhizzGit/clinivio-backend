@@ -11,16 +11,24 @@
     "docker:dev": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "typeorm": "typeorm-ts-node-commonjs -d apps/api/src/config/datasource.ts",
-    "smoke": "ts-node --project scripts/tsconfig.json scripts/smoke-test.ts"
+    "smoke": "ts-node --project scripts/tsconfig.json scripts/smoke-test.ts",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "eslint": "^8.56.0",
+    "husky": "^9.0.11",
+    "lint-staged": "^15.2.4",
     "prettier": "^3.2.5",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "turbo": "^1.12.4",
     "typescript": "^5.3.3"
+  },
+  "lint-staged": {
+    "**/*.{ts,json}": [
+      "prettier --write --ignore-unknown"
+    ]
   },
   "engines": {
     "node": ">=20.0.0",
