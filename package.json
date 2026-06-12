@@ -27,7 +27,7 @@
   },
   "lint-staged": {
     "**/*.{ts,json}": [
-      "prettier --write --ignore-unknown"
+      "pnpm exec prettier --write --ignore-unknown"
     ]
   },
   "engines": {
