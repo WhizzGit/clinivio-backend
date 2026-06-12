@@ -88,8 +88,8 @@ STRICT RULES:
 
 @Injectable()
 export class AiService {
-  private readonly client: Anthropic;
   private readonly logger = new Logger(AiService.name);
+  private _client: Anthropic | null = null;
 
   constructor(
     @InjectDataSource() private readonly platformDs: DataSource,
@@ -97,10 +97,19 @@ export class AiService {
     private readonly config: ConfigService,
     private readonly audit: AuditService,
     @Inject(AI_REDIS_CLIENT) private readonly redis: Redis,
-  ) {
-    this.client = new Anthropic({
-      apiKey: this.config.getOrThrow<string>("ANTHROPIC_API_KEY"),
-    });
+  ) {}
+
+  private get client(): Anthropic {
+    if (!this._client) {
+      const apiKey = this.config.get<string>("ANTHROPIC_API_KEY");
+      if (!apiKey) {
+        throw new Error(
+          "ANTHROPIC_API_KEY is not configured. Add it to your environment variables.",
+        );
+      }
+      this._client = new Anthropic({ apiKey });
+    }
+    return this._client;
   }
 
   // ── Anonymiser — strips all PII before anything leaves the system ─────────────
