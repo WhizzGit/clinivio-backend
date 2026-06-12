@@ -41,5 +41,10 @@
       "msgpackr-extract",
       "unrs-resolver"
     ]
+  },
+  "dependencies": {
+    "@nestjs/platform-socket.io": "^10.4.22",
+    "@nestjs/websockets": "^10.4.22",
+    "socket.io": "^4.8.3"
   }
 }

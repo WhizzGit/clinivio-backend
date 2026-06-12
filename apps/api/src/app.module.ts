@@ -50,6 +50,9 @@ import { PatientPortalModule } from "./patient-portal/patient-portal.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuditInterceptor } from "./audit/audit.interceptor";
 
+// AI
+import { AiModule } from "./ai/ai.module";
+
 @Module({
   imports: [
     // ── Configuration (global) ──────────────────────────────────────────────────
@@ -140,6 +143,9 @@ import { AuditInterceptor } from "./audit/audit.interceptor";
 
     // ── Audit Trail ───────────────────────────────────────────────────────────────
     AuditModule,
+
+    // ── AI Clinical Summary ───────────────────────────────────────────────────────
+    AiModule,
   ],
   providers: [
     // Global audit interceptor — logs all mutating HTTP requests automatically.

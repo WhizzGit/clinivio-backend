@@ -3,7 +3,9 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Optional,
 } from "@nestjs/common";
+import { AppointmentsGateway } from "./appointments.gateway";
 import { v4 as uuidv4 } from "uuid";
 import {
   Appointment,
@@ -27,7 +29,17 @@ export class AppointmentsService {
   constructor(
     private readonly db: TenantEntityManager,
     private kafka: KafkaProducerService,
+    @Optional() private readonly gateway: AppointmentsGateway | null = null,
   ) {}
+
+  private emit(
+    tenantId: string,
+    id: string,
+    status: string,
+    tokenNumber?: number | null,
+  ) {
+    this.gateway?.emitStatusUpdate(tenantId, { id, status, tokenNumber });
+  }
 
   async create(tenantId: string, dto: CreateAppointmentDto) {
     return this.db.transaction(async (em) => {
@@ -378,6 +390,12 @@ export class AppointmentsService {
       status: AppointmentStatus.CHECKED_IN,
       checkedInAt: new Date(),
     });
+    this.emit(
+      tenantId,
+      id,
+      AppointmentStatus.CHECKED_IN,
+      appointment.tokenNumber,
+    );
     return this.db.repo(Appointment).findOne({
       where: { id },
       relations: ["patient", "doctor", "slot", "department"],
@@ -399,6 +417,12 @@ export class AppointmentsService {
       status: AppointmentStatus.CONFIRMED,
       checkedInAt: null as any,
     });
+    this.emit(
+      tenantId,
+      id,
+      AppointmentStatus.CONFIRMED,
+      appointment.tokenNumber,
+    );
     return this.db.repo(Appointment).findOne({
       where: { id },
       relations: ["patient", "doctor", "slot", "department"],
@@ -418,6 +442,12 @@ export class AppointmentsService {
     await this.db
       .repo(Appointment)
       .update(id, { status: AppointmentStatus.IN_PROGRESS });
+    this.emit(
+      tenantId,
+      id,
+      AppointmentStatus.IN_PROGRESS,
+      appointment.tokenNumber,
+    );
     return this.db.repo(Appointment).findOne({
       where: { id },
       relations: ["patient", "doctor", "slot", "department"],
@@ -438,6 +468,12 @@ export class AppointmentsService {
       status: AppointmentStatus.COMPLETED,
       completedAt: new Date(),
     });
+    this.emit(
+      tenantId,
+      id,
+      AppointmentStatus.COMPLETED,
+      appointment.tokenNumber,
+    );
 
     await this.kafka.emit(KAFKA_TOPICS.APPOINTMENT_COMPLETED, {
       eventId: uuidv4(),
@@ -490,6 +526,12 @@ export class AppointmentsService {
         status: AppointmentStatus.SENT_TO_PHARMACY,
         pharmacySentAt: new Date(),
       });
+      this.emit(
+        tenantId,
+        id,
+        AppointmentStatus.SENT_TO_PHARMACY,
+        appointment.tokenNumber,
+      );
 
       return apptRepo.findOne({
         where: { id },
@@ -527,6 +569,7 @@ export class AppointmentsService {
       cancellationReason: reason,
       cancelledAt: new Date(),
     });
+    this.emit(tenantId, id, finalStatus, appointment.tokenNumber);
 
     if (appointment.slotId) {
       await this.db

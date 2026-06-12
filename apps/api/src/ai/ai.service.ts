@@ -1,10 +1,9 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException, Inject } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { DataSource, In } from "typeorm";
 import Anthropic from "@anthropic-ai/sdk";
 import { ConfigService } from "@nestjs/config";
-import { Redis } from "ioredis";
-import { InjectRedis } from "@nestjs-modules/ioredis";
+import type { Redis } from "ioredis";
 import {
   Patient,
   Consultation,
@@ -12,6 +11,8 @@ import {
   TenantDataSourceRegistry,
 } from "@mediflow/database";
 import { AuditService } from "../audit/audit.service";
+
+export const AI_REDIS_CLIENT = "AI_REDIS_CLIENT";
 
 // ── De-identified shape sent to Claude — NO PII ───────────────────────────────
 
@@ -95,7 +96,7 @@ export class AiService {
     private readonly registry: TenantDataSourceRegistry,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
-    @InjectRedis() private readonly redis: Redis,
+    @Inject(AI_REDIS_CLIENT) private readonly redis: Redis,
   ) {
     this.client = new Anthropic({
       apiKey: this.config.getOrThrow<string>("ANTHROPIC_API_KEY"),
