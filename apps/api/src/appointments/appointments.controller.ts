@@ -262,13 +262,18 @@ export class AppointmentsController {
 
   @Post(":id/cancel")
   @Roles("ADMIN", "RECEPTIONIST", "DOCTOR")
-  @ApiOperation({ summary: "Cancel appointment" })
+  @ApiOperation({ summary: "Cancel or mark no-show" })
   cancel(
     @Param("id") id: string,
     @TenantId() tenantId: string,
-    @Body() body: { reason: string },
+    @Body() body: { reason: string; cancelStatus?: string },
   ) {
-    return this.svc.cancel(id, tenantId, body.reason);
+    return this.svc.cancel(
+      id,
+      tenantId,
+      body.reason,
+      body.cancelStatus as AppointmentStatus,
+    );
   }
 
   /** GET /appointments/:id/queue — legacy: doctor queue by doctor ID */

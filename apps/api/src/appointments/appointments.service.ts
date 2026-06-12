@@ -374,18 +374,14 @@ export class AppointmentsService {
         "Appointment must be CONFIRMED to check in",
       );
     }
-    await this.db
-      .repo(Appointment)
-      .update(id, {
-        status: AppointmentStatus.CHECKED_IN,
-        checkedInAt: new Date(),
-      });
-    return this.db
-      .repo(Appointment)
-      .findOne({
-        where: { id },
-        relations: ["patient", "doctor", "slot", "department"],
-      });
+    await this.db.repo(Appointment).update(id, {
+      status: AppointmentStatus.CHECKED_IN,
+      checkedInAt: new Date(),
+    });
+    return this.db.repo(Appointment).findOne({
+      where: { id },
+      relations: ["patient", "doctor", "slot", "department"],
+    });
   }
 
   /** Reverse an accidental check-in — CHECKED_IN → CONFIRMED */
@@ -403,12 +399,10 @@ export class AppointmentsService {
       status: AppointmentStatus.CONFIRMED,
       checkedInAt: null as any,
     });
-    return this.db
-      .repo(Appointment)
-      .findOne({
-        where: { id },
-        relations: ["patient", "doctor", "slot", "department"],
-      });
+    return this.db.repo(Appointment).findOne({
+      where: { id },
+      relations: ["patient", "doctor", "slot", "department"],
+    });
   }
 
   async startConsultation(id: string, tenantId: string) {
@@ -424,12 +418,10 @@ export class AppointmentsService {
     await this.db
       .repo(Appointment)
       .update(id, { status: AppointmentStatus.IN_PROGRESS });
-    return this.db
-      .repo(Appointment)
-      .findOne({
-        where: { id },
-        relations: ["patient", "doctor", "slot", "department"],
-      });
+    return this.db.repo(Appointment).findOne({
+      where: { id },
+      relations: ["patient", "doctor", "slot", "department"],
+    });
   }
 
   async complete(id: string, tenantId: string) {
@@ -442,12 +434,10 @@ export class AppointmentsService {
         "Appointment must be IN_PROGRESS to complete",
       );
     }
-    await this.db
-      .repo(Appointment)
-      .update(id, {
-        status: AppointmentStatus.COMPLETED,
-        completedAt: new Date(),
-      });
+    await this.db.repo(Appointment).update(id, {
+      status: AppointmentStatus.COMPLETED,
+      completedAt: new Date(),
+    });
 
     await this.kafka.emit(KAFKA_TOPICS.APPOINTMENT_COMPLETED, {
       eventId: uuidv4(),
@@ -463,12 +453,10 @@ export class AppointmentsService {
       },
     });
 
-    return this.db
-      .repo(Appointment)
-      .findOne({
-        where: { id },
-        relations: ["patient", "doctor", "slot", "department"],
-      });
+    return this.db.repo(Appointment).findOne({
+      where: { id },
+      relations: ["patient", "doctor", "slot", "department"],
+    });
   }
 
   async sendToPharmacy(id: string, tenantId: string) {
@@ -510,17 +498,32 @@ export class AppointmentsService {
     });
   }
 
-  async cancel(id: string, tenantId: string, reason: string) {
+  async cancel(
+    id: string,
+    tenantId: string,
+    reason: string,
+    cancelStatus: AppointmentStatus = AppointmentStatus.CANCELLED,
+  ) {
     const appointment = await this.db
       .repo(Appointment)
       .findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException("Appointment not found");
-    if (appointment.status === AppointmentStatus.CANCELLED) {
-      throw new BadRequestException("Appointment is already cancelled");
+    if (
+      appointment.status === AppointmentStatus.CANCELLED ||
+      appointment.status === AppointmentStatus.NO_SHOW
+    ) {
+      throw new BadRequestException("Appointment is already dismissed");
     }
 
+    const finalStatus = [
+      AppointmentStatus.CANCELLED,
+      AppointmentStatus.NO_SHOW,
+    ].includes(cancelStatus)
+      ? cancelStatus
+      : AppointmentStatus.CANCELLED;
+
     await this.db.repo(Appointment).update(id, {
-      status: AppointmentStatus.CANCELLED,
+      status: finalStatus,
       cancellationReason: reason,
       cancelledAt: new Date(),
     });
@@ -546,12 +549,10 @@ export class AppointmentsService {
       },
     });
 
-    return this.db
-      .repo(Appointment)
-      .findOne({
-        where: { id },
-        relations: ["patient", "doctor", "slot", "department"],
-      });
+    return this.db.repo(Appointment).findOne({
+      where: { id },
+      relations: ["patient", "doctor", "slot", "department"],
+    });
   }
 
   /**
