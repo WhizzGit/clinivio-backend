@@ -1,11 +1,20 @@
-import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
-import * as bcrypt from 'bcrypt';
-import { User, Tenant, Role, TenantDataSourceRegistry } from '@mediflow/database';
-import { JwtPayload } from '@mediflow/shared';
+import {
+  Injectable,
+  UnauthorizedException,
+  NotFoundException,
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
+import { InjectDataSource } from "@nestjs/typeorm";
+import { DataSource } from "typeorm";
+import * as bcrypt from "bcrypt";
+import {
+  User,
+  Tenant,
+  Role,
+  TenantDataSourceRegistry,
+} from "@mediflow/database";
+import { JwtPayload } from "@mediflow/shared";
 
 @Injectable()
 export class AuthService {
@@ -29,7 +38,7 @@ export class AuthService {
    * This lets all user types share one login URL regardless of subdomain.
    */
   async validateUser(
-    email: string,
+    identifier: string,
     password: string,
     tenantId?: string,
     slug?: string,
@@ -38,11 +47,9 @@ export class AuthService {
     let targetDs = this.registry.currentOrNull;
 
     if (!targetDs && (tenantId || slug)) {
-      // Body-supplied tenant identifier — look up the tenant record then
-      // bootstrap (or reuse a cached) DataSource for that schema.
       const where = tenantId
         ? { id: tenantId, isActive: true }
-        : { slug,        isActive: true };
+        : { slug, isActive: true };
 
       const tenant = await this.platformDs
         .getRepository(Tenant)
@@ -57,26 +64,33 @@ export class AuthService {
     let user: User | null = null;
 
     if (targetDs) {
-      // ── Tenant user path ─────────────────────────────────────────────────
+      // ── Tenant user path — match staffId OR email ─────────────────────
       user = await targetDs.getRepository(User).findOne({
-        where: { email, isActive: true },
-        relations: ['doctorProfile'],
+        where: [
+          { staffId: identifier, isActive: true },
+          { email: identifier, isActive: true },
+        ],
+        relations: ["doctorProfile"],
       });
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);
         if (!isMatch) return null;
-        await targetDs.getRepository(User).update(user.id, { lastLoginAt: new Date() });
+        await targetDs
+          .getRepository(User)
+          .update(user.id, { lastLoginAt: new Date() });
       }
     } else {
-      // ── SUPER_ADMIN path (no tenant context anywhere) ─────────────────────
+      // ── SUPER_ADMIN path (no tenant context) — email only ─────────────
       user = await this.platformDs.getRepository(User).findOne({
-        where: { email, role: Role.SUPER_ADMIN, isActive: true },
-        relations: ['doctorProfile'],
+        where: { email: identifier, role: Role.SUPER_ADMIN, isActive: true },
+        relations: ["doctorProfile"],
       });
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);
         if (!isMatch) return null;
-        await this.platformDs.getRepository(User).update(user.id, { lastLoginAt: new Date() });
+        await this.platformDs
+          .getRepository(User)
+          .update(user.id, { lastLoginAt: new Date() });
       }
     }
 
@@ -95,14 +109,15 @@ export class AuthService {
     };
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get<string>('jwt.refreshSecret'),
-      expiresIn: this.configService.get<string>('jwt.refreshExpiresIn'),
+      secret: this.configService.get<string>("jwt.refreshSecret"),
+      expiresIn: this.configService.get<string>("jwt.refreshExpiresIn"),
     });
     return {
       accessToken,
       refreshToken,
       user: {
         id: user.id,
+        staffId: user.staffId ?? null,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
@@ -116,7 +131,7 @@ export class AuthService {
   async refreshToken(token: string) {
     try {
       const payload = this.jwtService.verify<JwtPayload>(token, {
-        secret: this.configService.get<string>('jwt.refreshSecret'),
+        secret: this.configService.get<string>("jwt.refreshSecret"),
       });
       const newPayload: JwtPayload = {
         sub: payload.sub,
@@ -126,12 +141,12 @@ export class AuthService {
       };
       return { accessToken: this.jwtService.sign(newPayload) };
     } catch {
-      throw new UnauthorizedException('Invalid or expired refresh token');
+      throw new UnauthorizedException("Invalid or expired refresh token");
     }
   }
 
   async logout(_userId: string) {
-    return { message: 'Logged out successfully' };
+    return { message: "Logged out successfully" };
   }
 
   /**
@@ -170,15 +185,16 @@ export class AuthService {
 
     // ── Verify current password ──────────────────────────────────────────
     const user = await repo.findOne({ where: { id: userId, isActive: true } });
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) throw new NotFoundException("User not found");
 
     const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!isMatch) throw new UnauthorizedException('Current password is incorrect');
+    if (!isMatch)
+      throw new UnauthorizedException("Current password is incorrect");
 
     // ── Apply new password ────────────────────────────────────────────────
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await repo.update(userId, { passwordHash });
 
-    return { message: 'Password changed successfully' };
+    return { message: "Password changed successfully" };
   }
 }

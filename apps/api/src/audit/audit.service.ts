@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { DataSource } from "typeorm";
-import { AuditLog } from "@mediflow/database";
+import { AuditLog, Tenant, TenantDataSourceRegistry } from "@mediflow/database";
 
 export interface AuditEntry {
   tenantId?: string;
@@ -21,12 +21,19 @@ export interface AuditEntry {
 
 @Injectable()
 export class AuditService {
-  constructor(@InjectDataSource() private platformDs: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly platformDs: DataSource,
+    private readonly registry: TenantDataSourceRegistry,
+  ) {}
 
   /** Fire-and-forget — never throws, never blocks the main request. */
   async log(entry: AuditEntry): Promise<void> {
     try {
-      await this.platformDs.getRepository(AuditLog).save({
+      // Use the current request's tenant DS (from ALS) if available — the
+      // audit_logs table is guaranteed to exist there via synchronize:true.
+      // Fall back to the platform DS for super-admin / unauthenticated paths.
+      const ds = this.registry.currentOrNull ?? this.platformDs;
+      await ds.getRepository(AuditLog).save({
         ...entry,
         success: entry.success ?? true,
       });
@@ -58,7 +65,11 @@ export class AuditService {
     } = filters;
     const safeLimit = Math.min(limit, 100);
 
-    const qb = this.platformDs
+    // Resolve the tenant's schema DataSource so we query audit_logs from the
+    // schema where it was actually written (synchronize:true ensures it exists).
+    const ds = await this.resolveTenantDs(tenantId);
+
+    const qb = ds
       .getRepository(AuditLog)
       .createQueryBuilder("log")
       .where("log.tenantId = :tenantId", { tenantId })
@@ -80,5 +91,25 @@ export class AuditService {
       limit: safeLimit,
       pages: Math.ceil(total / safeLimit),
     };
+  }
+
+  private async resolveTenantDs(tenantId: string): Promise<DataSource> {
+    // Look up the tenant slug from the platform DB so we can open (or reuse) its
+    // schema DataSource.  getOrCreate is idempotent — returns from cache if already
+    // initialized, so this is cheap for any tenant that had a recent request.
+    const tenant = await this.platformDs.getRepository(Tenant).findOne({
+      where: { id: tenantId },
+      select: ["id", "slug"],
+    });
+    if (tenant?.slug) {
+      // Cast: pnpm resolves typeorm to two separate package instances (one for
+      // ioredis peers, one for pg peers); the DataSource shapes are identical at
+      // runtime. The cast removes the spurious structural-incompatibility error.
+      return this.registry.getOrCreate(
+        tenantId,
+        tenant.slug,
+      ) as unknown as DataSource;
+    }
+    return this.platformDs;
   }
 }
