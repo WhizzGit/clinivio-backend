@@ -95,7 +95,7 @@ export class UsersService {
     }
     if (filters.q) {
       qb.andWhere(
-        "(LOWER(user.firstName) LIKE :q OR LOWER(user.lastName) LIKE :q OR LOWER(user.email) LIKE :q)",
+        "(LOWER(user.firstName) LIKE :q OR LOWER(user.lastName) LIKE :q OR LOWER(user.email) LIKE :q OR LOWER(COALESCE(user.staffId, '')) LIKE :q)",
         { q: `%${filters.q.toLowerCase()}%` },
       );
     }
