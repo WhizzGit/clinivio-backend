@@ -221,6 +221,14 @@ export class UsersService {
     return this.findById(user.id, tenantId);
   }
 
+  async assignStaffId(id: string, tenantId: string) {
+    const user = await this.findById(id, tenantId);
+    if (user.staffId) return user;
+    const staffId = await this.generateStaffId(tenantId, user.role as Role);
+    await this.db.repo(User).update(id, { staffId });
+    return this.findById(id, tenantId);
+  }
+
   async update(id: string, tenantId: string, dto: UpdateUserDto) {
     const user = await this.findById(id, tenantId);
 
