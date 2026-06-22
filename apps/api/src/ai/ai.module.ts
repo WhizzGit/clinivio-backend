@@ -11,7 +11,7 @@ import { AiController } from "./ai.controller";
       inject: [ConfigService],
       useFactory: (config: ConfigService): Redis => {
         const url = config.get<string>("redis.url");
-        if (url) return new Redis(url);
+        if (url) return new Redis(url, { lazyConnect: true });
         return new Redis({
           host: config.get<string>("redis.host") ?? "localhost",
           port: config.get<number>("redis.port") ?? 6379,

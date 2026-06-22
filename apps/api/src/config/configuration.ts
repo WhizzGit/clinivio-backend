@@ -9,7 +9,10 @@ export default () => ({
   },
 
   redis: {
-    url: process.env.REDIS_URL ?? "",
+    // Only pass URL if it looks like a valid redis(s):// scheme — prevents ioredis crashes on malformed values.
+    url: /^rediss?:\/\//.test(process.env.REDIS_URL ?? "")
+      ? process.env.REDIS_URL!
+      : "",
     host: process.env.REDIS_HOST ?? "localhost",
     port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
   },
