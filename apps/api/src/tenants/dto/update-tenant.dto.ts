@@ -1,8 +1,16 @@
 import {
-  IsEmail, IsOptional, IsString, IsEnum, IsBoolean, MinLength,
-} from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { SubscriptionTier } from '@mediflow/database';
+  IsEmail,
+  IsOptional,
+  IsString,
+  IsEnum,
+  IsBoolean,
+  IsNumber,
+  Min,
+  Max,
+  MinLength,
+} from "class-validator";
+import { ApiPropertyOptional } from "@nestjs/swagger";
+import { SubscriptionTier } from "@mediflow/database";
 
 /**
  * PATCH /tenants/:id
@@ -12,8 +20,10 @@ import { SubscriptionTier } from '@mediflow/database';
  */
 export class UpdateTenantDto {
   // ── Tenant profile ──────────────────────────────────────────────────────────
-  @ApiPropertyOptional({ example: 'Apollo Hospitals' })
-  @IsOptional() @IsString() @MinLength(2)
+  @ApiPropertyOptional({ example: "Apollo Hospitals" })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
   name?: string;
 
   @ApiPropertyOptional() @IsOptional() @IsString() address?: string;
@@ -22,13 +32,44 @@ export class UpdateTenantDto {
   @ApiPropertyOptional() @IsOptional() @IsString() stateCode?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() pincode?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() gstin?: string;
+  @ApiPropertyOptional({
+    description: "CGST rate in %, e.g. 9 for 9%",
+    example: 9,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(50)
+  cgstRate?: number;
+  @ApiPropertyOptional({
+    description: "SGST rate in %, e.g. 9 for 9%",
+    example: 9,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(50)
+  sgstRate?: number;
+  @ApiPropertyOptional({
+    description: "IGST rate in %, e.g. 18 for 18%",
+    example: 18,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(50)
+  igstRate?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() drugLicenseNo?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() abhaHipId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() whatsappPhoneNumberId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  whatsappPhoneNumberId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() wabaId?: string;
 
   @ApiPropertyOptional({ enum: SubscriptionTier })
-  @IsOptional() @IsEnum(SubscriptionTier)
+  @IsOptional()
+  @IsEnum(SubscriptionTier)
   subscriptionTier?: SubscriptionTier;
 
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
@@ -45,13 +86,16 @@ export class UpdateTenantDto {
 
   // ── Admin user ─────────────────────────────────────────────────────────────
   /** Change the ADMIN user's login email */
-  @ApiPropertyOptional({ example: 'admin@hospital.com' })
-  @IsOptional() @IsEmail()
+  @ApiPropertyOptional({ example: "admin@hospital.com" })
+  @IsOptional()
+  @IsEmail()
   adminEmail?: string;
 
   /** Set a specific new password for the ADMIN user (min 8 chars) */
-  @ApiPropertyOptional({ example: 'NewPass@123' })
-  @IsOptional() @IsString() @MinLength(8)
+  @ApiPropertyOptional({ example: "NewPass@123" })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
   adminPassword?: string;
 
   @ApiPropertyOptional() @IsOptional() @IsString() adminFirstName?: string;

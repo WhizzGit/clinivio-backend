@@ -4,14 +4,19 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
-} from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
-import * as bcrypt from 'bcrypt';
-import { Tenant, User, Role, TenantDataSourceRegistry } from '@mediflow/database';
-import { CreateTenantDto } from './dto/create-tenant.dto';
-import { UpdateTenantDto } from './dto/update-tenant.dto';
+} from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { InjectDataSource } from "@nestjs/typeorm";
+import { Repository, DataSource } from "typeorm";
+import * as bcrypt from "bcrypt";
+import {
+  Tenant,
+  User,
+  Role,
+  TenantDataSourceRegistry,
+} from "@mediflow/database";
+import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { UpdateTenantDto } from "./dto/update-tenant.dto";
 
 @Injectable()
 export class TenantsService {
@@ -26,11 +31,13 @@ export class TenantsService {
   // ── Queries ────────────────────────────────────────────────────────────────
 
   findAll() {
-    return this.tenantRepo.find({ order: { createdAt: 'DESC' } });
+    return this.tenantRepo.find({ order: { createdAt: "DESC" } });
   }
 
   async findAllWithStats() {
-    const tenants = await this.tenantRepo.find({ order: { createdAt: 'DESC' } });
+    const tenants = await this.tenantRepo.find({
+      order: { createdAt: "DESC" },
+    });
     return Promise.all(
       tenants.map(async (t) => {
         // Skip the platform tenant (slug = null) — it has no tenant schema
@@ -49,7 +56,7 @@ export class TenantsService {
             tenantDs.getRepository(User).count({ where: { isActive: true } }),
             tenantDs.getRepository(User).findOne({
               where: { role: Role.ADMIN },
-              select: ['email', 'firstName', 'lastName', 'lastLoginAt'],
+              select: ["email", "firstName", "lastName", "lastLoginAt"],
             }),
           ]);
           return {
@@ -77,7 +84,7 @@ export class TenantsService {
 
   async findById(id: string) {
     const tenant = await this.tenantRepo.findOne({ where: { id } });
-    if (!tenant) throw new NotFoundException('Tenant not found');
+    if (!tenant) throw new NotFoundException("Tenant not found");
     return tenant;
   }
 
@@ -108,7 +115,7 @@ export class TenantsService {
         drugLicenseNo: dto.drugLicenseNo,
         whatsappPhoneNumberId: dto.whatsappPhoneNumberId,
         wabaId: dto.wabaId,
-        subscriptionTier: (dto.subscriptionTier as any) ?? 'BASIC',
+        subscriptionTier: (dto.subscriptionTier as any) ?? "BASIC",
         phone: dto.phone,
         email: dto.email,
         website: dto.website,
@@ -121,10 +128,10 @@ export class TenantsService {
     );
 
     // 4. Create PostgreSQL schema for the tenant
-    await this.platformDs.query(
-      `CREATE SCHEMA IF NOT EXISTS "tenant_${slug}"`,
+    await this.platformDs.query(`CREATE SCHEMA IF NOT EXISTS "tenant_${slug}"`);
+    this.logger.log(
+      `Created schema tenant_${slug} for tenant "${tenant.name}"`,
     );
-    this.logger.log(`Created schema tenant_${slug} for tenant "${tenant.name}"`);
 
     // 5. Initialise per-tenant DataSource (synchronize = true in dev → creates tables)
     const tenantDs = await this.registry.getOrCreate(tenant.id, slug);
@@ -174,28 +181,38 @@ export class TenantsService {
     // ── 1. Tenant profile fields ────────────────────────────────────────────
     const tenantPatch: Partial<Tenant> = {};
     const str = (v: string | undefined) => v !== undefined;
-    if (str(data.name))                   tenantPatch.name                   = data.name!;
-    if (str(data.address))                tenantPatch.address                = data.address!;
-    if (str(data.city))                   tenantPatch.city                   = data.city!;
-    if (str(data.state))                  tenantPatch.state                  = data.state!;
-    if (str(data.stateCode))              tenantPatch.stateCode              = data.stateCode!;
-    if (str(data.pincode))                tenantPatch.pincode                = data.pincode!;
-    if (str(data.gstin))                  tenantPatch.gstin                  = data.gstin!;
-    if (str(data.drugLicenseNo))          tenantPatch.drugLicenseNo          = data.drugLicenseNo!;
-    if (str(data.abhaHipId))              tenantPatch.abhaHipId              = data.abhaHipId!;
-    if (str(data.whatsappPhoneNumberId))  tenantPatch.whatsappPhoneNumberId  = data.whatsappPhoneNumberId!;
-    if (str(data.wabaId))                 tenantPatch.wabaId                 = data.wabaId!;
-    if (str(data.phone))                  tenantPatch.phone                  = data.phone!;
-    if (str(data.email))                  tenantPatch.email                  = data.email!;
-    if (str(data.website))                tenantPatch.website                = data.website!;
-    if (str(data.registrationNo))         tenantPatch.registrationNo         = data.registrationNo!;
-    if (str(data.tagline))                tenantPatch.tagline                = data.tagline!;
-    if (str(data.printHeader))            tenantPatch.printHeader            = data.printHeader!;
-    if (str(data.logoUrl))                tenantPatch.logoUrl                = data.logoUrl!;
-    if (str(data.pharmacyName))           tenantPatch.pharmacyName           = data.pharmacyName!;
-    if (str(data.portalUrl))              tenantPatch.portalUrl              = data.portalUrl!;
-    if (data.subscriptionTier !== undefined) tenantPatch.subscriptionTier    = data.subscriptionTier as any;
-    if (data.isActive !== undefined)         tenantPatch.isActive            = data.isActive;
+    if (str(data.name)) tenantPatch.name = data.name!;
+    if (str(data.address)) tenantPatch.address = data.address!;
+    if (str(data.city)) tenantPatch.city = data.city!;
+    if (str(data.state)) tenantPatch.state = data.state!;
+    if (str(data.stateCode)) tenantPatch.stateCode = data.stateCode!;
+    if (str(data.pincode)) tenantPatch.pincode = data.pincode!;
+    if (str(data.gstin)) tenantPatch.gstin = data.gstin!;
+    if (data.cgstRate !== undefined)
+      tenantPatch.cgstRate = String(data.cgstRate);
+    if (data.sgstRate !== undefined)
+      tenantPatch.sgstRate = String(data.sgstRate);
+    if (data.igstRate !== undefined)
+      tenantPatch.igstRate = String(data.igstRate);
+    if (str(data.drugLicenseNo))
+      tenantPatch.drugLicenseNo = data.drugLicenseNo!;
+    if (str(data.abhaHipId)) tenantPatch.abhaHipId = data.abhaHipId!;
+    if (str(data.whatsappPhoneNumberId))
+      tenantPatch.whatsappPhoneNumberId = data.whatsappPhoneNumberId!;
+    if (str(data.wabaId)) tenantPatch.wabaId = data.wabaId!;
+    if (str(data.phone)) tenantPatch.phone = data.phone!;
+    if (str(data.email)) tenantPatch.email = data.email!;
+    if (str(data.website)) tenantPatch.website = data.website!;
+    if (str(data.registrationNo))
+      tenantPatch.registrationNo = data.registrationNo!;
+    if (str(data.tagline)) tenantPatch.tagline = data.tagline!;
+    if (str(data.printHeader)) tenantPatch.printHeader = data.printHeader!;
+    if (str(data.logoUrl)) tenantPatch.logoUrl = data.logoUrl!;
+    if (str(data.pharmacyName)) tenantPatch.pharmacyName = data.pharmacyName!;
+    if (str(data.portalUrl)) tenantPatch.portalUrl = data.portalUrl!;
+    if (data.subscriptionTier !== undefined)
+      tenantPatch.subscriptionTier = data.subscriptionTier as any;
+    if (data.isActive !== undefined) tenantPatch.isActive = data.isActive;
 
     if (Object.keys(tenantPatch).length) {
       await this.tenantRepo.update(id, tenantPatch);
@@ -203,30 +220,37 @@ export class TenantsService {
 
     // ── 2. Admin user fields (only if any admin field was supplied) ──────────
     const hasAdminUpdate =
-      data.adminEmail    !== undefined ||
+      data.adminEmail !== undefined ||
       data.adminPassword !== undefined ||
       data.adminFirstName !== undefined ||
-      data.adminLastName  !== undefined ||
-      data.adminPhone     !== undefined;
+      data.adminLastName !== undefined ||
+      data.adminPhone !== undefined;
 
     if (hasAdminUpdate) {
       if (!tenant.slug) {
-        throw new ConflictException('Cannot update admin user for the platform tenant via this endpoint');
+        throw new ConflictException(
+          "Cannot update admin user for the platform tenant via this endpoint",
+        );
       }
       const tenantDs = await this.registry.getOrCreate(id, tenant.slug);
-      const userRepo  = tenantDs.getRepository(User);
+      const userRepo = tenantDs.getRepository(User);
 
-      const admin = await userRepo.findOne({ where: { role: Role.ADMIN, isActive: true } });
+      const admin = await userRepo.findOne({
+        where: { role: Role.ADMIN, isActive: true },
+      });
       if (!admin) {
-        throw new NotFoundException('No active ADMIN user found for this tenant');
+        throw new NotFoundException(
+          "No active ADMIN user found for this tenant",
+        );
       }
 
       const userPatch: Partial<User> = {};
-      if (str(data.adminEmail))     userPatch.email     = data.adminEmail!;
+      if (str(data.adminEmail)) userPatch.email = data.adminEmail!;
       if (str(data.adminFirstName)) userPatch.firstName = data.adminFirstName!;
-      if (str(data.adminLastName))  userPatch.lastName  = data.adminLastName!;
-      if (str(data.adminPhone))     userPatch.phone     = data.adminPhone!;
-      if (str(data.adminPassword))  userPatch.passwordHash = await bcrypt.hash(data.adminPassword!, 12);
+      if (str(data.adminLastName)) userPatch.lastName = data.adminLastName!;
+      if (str(data.adminPhone)) userPatch.phone = data.adminPhone!;
+      if (str(data.adminPassword))
+        userPatch.passwordHash = await bcrypt.hash(data.adminPassword!, 12);
 
       await userRepo.update(admin.id, userPatch);
       this.logger.log(`Updated admin user ${admin.id} for tenant ${id}`);
@@ -251,7 +275,7 @@ export class TenantsService {
     const tenant = await this.findById(id);
 
     if (!tenant.slug) {
-      throw new ForbiddenException('The platform tenant cannot be deleted');
+      throw new ForbiddenException("The platform tenant cannot be deleted");
     }
 
     // 1. Close and evict the cached DataSource for this tenant
@@ -276,9 +300,10 @@ export class TenantsService {
 
     const admin = await tenantDs.getRepository(User).findOne({
       where: { role: Role.ADMIN, isActive: true },
-      select: ['id', 'email', 'firstName', 'lastName'],
+      select: ["id", "email", "firstName", "lastName"],
     });
-    if (!admin) throw new NotFoundException('Admin user not found for this tenant');
+    if (!admin)
+      throw new NotFoundException("Admin user not found for this tenant");
 
     const newPassword = this.generateSecurePassword();
     const passwordHash = await bcrypt.hash(newPassword, 12);
@@ -302,26 +327,27 @@ export class TenantsService {
   private generateSlug(name: string): string {
     return name
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
       .slice(0, 63);
   }
 
   private generateSecurePassword(): string {
-    const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-    const lower = 'abcdefghjkmnpqrstuvwxyz';
-    const digits = '23456789';
-    const special = '@#$!';
+    const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const lower = "abcdefghjkmnpqrstuvwxyz";
+    const digits = "23456789";
+    const special = "@#$!";
     let pwd =
       upper[Math.floor(Math.random() * upper.length)] +
       lower[Math.floor(Math.random() * lower.length)] +
       digits[Math.floor(Math.random() * digits.length)] +
       special[Math.floor(Math.random() * special.length)];
     const all = upper + lower + digits;
-    for (let i = 0; i < 6; i++) pwd += all[Math.floor(Math.random() * all.length)];
+    for (let i = 0; i < 6; i++)
+      pwd += all[Math.floor(Math.random() * all.length)];
     return pwd
-      .split('')
+      .split("")
       .sort(() => Math.random() - 0.5)
-      .join('');
+      .join("");
   }
 }
