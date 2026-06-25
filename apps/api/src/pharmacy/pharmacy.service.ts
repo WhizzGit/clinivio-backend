@@ -56,6 +56,17 @@ export class UpdatePharmacyOrderDto {
   dispenserNotes?: string;
 }
 
+export class DispenseItemDto {
+  inventoryId: string;
+  quantity: number;
+}
+
+export class DispenseOrderDto {
+  items: DispenseItemDto[];
+  paymentMethod: "CASH" | "CARD" | "UPI" | "ONLINE";
+  dispenserNotes?: string;
+}
+
 @Injectable()
 export class PharmacyService {
   constructor(
@@ -141,12 +152,10 @@ export class PharmacyService {
         },
       });
       if (!existing) {
-        const tenant = await this.platformDs
-          .getRepository(Tenant)
-          .findOne({
-            where: { id: tenantId },
-            select: ["id", "cgstRate", "sgstRate"],
-          });
+        const tenant = await this.platformDs.getRepository(Tenant).findOne({
+          where: { id: tenantId },
+          select: ["id", "cgstRate", "sgstRate"],
+        });
         const defaultCgst =
           tenant?.cgstRate !== null && tenant?.cgstRate !== undefined
             ? parseFloat(tenant.cgstRate)
@@ -360,5 +369,153 @@ export class PharmacyService {
       .andWhere("inv.expiryDate <= :futureDate", { futureDate })
       .orderBy("inv.expiryDate", "ASC")
       .getMany();
+  }
+
+  async dispenseOrder(id: string, tenantId: string, dto: DispenseOrderDto) {
+    const order = await this.db
+      .repo(PharmacyOrder)
+      .findOne({ where: { id, tenantId } });
+    if (!order) throw new NotFoundException("Pharmacy order not found");
+    if (order.status === PharmacyOrderStatus.DISPENSED)
+      throw new BadRequestException("Order is already dispensed");
+    if (order.status === PharmacyOrderStatus.RETURNED)
+      throw new BadRequestException("Cannot dispense a returned order");
+    if (!dto.items?.length)
+      throw new BadRequestException(
+        "At least one item is required to dispense",
+      );
+
+    // Validate each inventory item and check stock
+    const resolved: Array<{ inv: PharmacyInventory; quantity: number }> = [];
+    for (const dtoItem of dto.items) {
+      const inv = await this.db
+        .repo(PharmacyInventory)
+        .findOne({
+          where: { id: dtoItem.inventoryId, tenantId, isActive: true },
+        });
+      if (!inv)
+        throw new BadRequestException(
+          `Inventory item not found: ${dtoItem.inventoryId}`,
+        );
+      if (inv.stockQty < dtoItem.quantity)
+        throw new BadRequestException(
+          `Insufficient stock for "${inv.name}" — available: ${inv.stockQty}, requested: ${dtoItem.quantity}`,
+        );
+      resolved.push({ inv, quantity: dtoItem.quantity });
+    }
+
+    // Get tenant default GST rates for fallback
+    const tenant = await this.platformDs
+      .getRepository(Tenant)
+      .findOne({
+        where: { id: tenantId },
+        select: ["id", "cgstRate", "sgstRate"],
+      });
+    const envCgst = parseFloat(process.env.GST_CGST_RATE ?? "0.09") * 100;
+    const envSgst = parseFloat(process.env.GST_SGST_RATE ?? "0.09") * 100;
+    const defaultCgstPct =
+      tenant?.cgstRate != null ? parseFloat(tenant.cgstRate) : envCgst;
+    const defaultSgstPct =
+      tenant?.sgstRate != null ? parseFloat(tenant.sgstRate) : envSgst;
+
+    // Calculate amounts
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    let subtotal = 0;
+    let totalCgst = 0;
+    let totalSgst = 0;
+    const lineItems = resolved.map(({ inv, quantity }) => {
+      const unitPrice = parseFloat(inv.sellingPrice);
+      const lineTotal = unitPrice * quantity;
+      const cgstPct =
+        inv.gstRate != null ? parseFloat(inv.gstRate) / 2 : defaultCgstPct;
+      const sgstPct =
+        inv.gstRate != null ? parseFloat(inv.gstRate) / 2 : defaultSgstPct;
+      subtotal += lineTotal;
+      totalCgst += r2((lineTotal * cgstPct) / 100);
+      totalSgst += r2((lineTotal * sgstPct) / 100);
+      return {
+        inventoryId: inv.id,
+        name: inv.name,
+        unit: inv.unit,
+        quantity,
+        unitPrice,
+        cgstPct,
+        sgstPct,
+      };
+    });
+    const taxable = subtotal;
+    const totalAmount = r2(taxable + totalCgst + totalSgst);
+
+    const now = new Date();
+
+    // Deduct stock for each item
+    await Promise.all(
+      resolved.map(({ inv, quantity }) =>
+        this.db
+          .repo(PharmacyInventory)
+          .update(inv.id, { stockQty: inv.stockQty - quantity }),
+      ),
+    );
+
+    // Upsert pharmacy invoice
+    const existing = await this.db.repo(Invoice).findOne({
+      where: {
+        appointmentId: order.appointmentId,
+        tenantId,
+        invoiceType: InvoiceType.PHARMACY,
+      },
+    });
+    const invoiceCount = await this.db
+      .repo(Invoice)
+      .count({ where: { tenantId } });
+    const invoiceNumber =
+      existing?.invoiceNumber ??
+      `INV-PHR-${String(invoiceCount + 1).padStart(6, "0")}`;
+
+    if (existing) {
+      await this.db.repo(Invoice).update(existing.id, {
+        lineItems,
+        subtotal: String(r2(subtotal)),
+        discountAmount: "0",
+        taxableAmount: String(r2(taxable)),
+        cgstAmount: String(r2(totalCgst)),
+        sgstAmount: String(r2(totalSgst)),
+        igstAmount: "0",
+        totalAmount: String(totalAmount),
+        paymentStatus: PaymentStatus.PAID,
+        paymentMethod: dto.paymentMethod,
+        paidAt: now,
+      });
+    } else {
+      await this.db.repo(Invoice).save(
+        this.db.repo(Invoice).create({
+          tenantId,
+          patientId: order.patientId,
+          appointmentId: order.appointmentId,
+          invoiceNumber,
+          invoiceType: InvoiceType.PHARMACY,
+          lineItems,
+          subtotal: String(r2(subtotal)),
+          discountAmount: "0",
+          taxableAmount: String(r2(taxable)),
+          cgstAmount: String(r2(totalCgst)),
+          sgstAmount: String(r2(totalSgst)),
+          igstAmount: "0",
+          totalAmount: String(totalAmount),
+          paymentStatus: PaymentStatus.PAID,
+          paymentMethod: dto.paymentMethod,
+          paidAt: now,
+        }),
+      );
+    }
+
+    // Mark order dispensed
+    await this.db.repo(PharmacyOrder).update(id, {
+      status: PharmacyOrderStatus.DISPENSED,
+      dispensedAt: now,
+      dispenserNotes: dto.dispenserNotes ?? null,
+    });
+
+    return this.findOrderById(id, tenantId);
   }
 }
