@@ -1,0 +1,97 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Query,
+  Body,
+  Request,
+  UseGuards,
+} from "@nestjs/common";
+import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import { AuthGuard } from "@nestjs/passport";
+import { RolesGuard, Roles, TenantId } from "@mediflow/shared";
+import { AnalyticsService, COMMON_CONDITIONS } from "./analytics.service";
+
+class PrescriptionSuggestionsDto {
+  conditions: string[];
+  diagnosis: string;
+  observations?: string;
+  ageInYears?: number;
+  gender?: string;
+}
+
+@ApiTags("Analytics")
+@ApiBearerAuth()
+@UseGuards(AuthGuard("jwt"), RolesGuard)
+@Controller("analytics")
+export class AnalyticsController {
+  constructor(private svc: AnalyticsService) {}
+
+  @Get("conditions")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({ summary: "Patient condition distribution across the tenant" })
+  conditionDistribution(@TenantId() tenantId: string) {
+    return this.svc.getConditionDistribution(tenantId);
+  }
+
+  @Get("medicine-patterns")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({
+    summary: "Top prescribed medicines — optionally filtered by condition",
+  })
+  medicinePatterns(
+    @TenantId() tenantId: string,
+    @Query("condition") condition?: string,
+  ) {
+    return this.svc.getMedicinePatterns(tenantId, condition);
+  }
+
+  @Get("vital-trends")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({
+    summary: "Average vital statistics for patients with a given condition",
+  })
+  vitalTrends(
+    @TenantId() tenantId: string,
+    @Query("condition") condition: string,
+  ) {
+    return this.svc.getVitalTrends(tenantId, condition);
+  }
+
+  @Get("ai-insights")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({
+    summary: "AI-generated population-level insights (cached 6h)",
+  })
+  aiInsights(@TenantId() tenantId: string, @Request() req: any) {
+    return this.svc.getAiInsights(tenantId, req.user?.sub ?? req.user?.id);
+  }
+
+  @Get("common-conditions")
+  @Roles("ADMIN", "DOCTOR", "NURSE", "RECEPTIONIST")
+  @ApiOperation({ summary: "Master list of common condition tags" })
+  commonConditions() {
+    return { conditions: COMMON_CONDITIONS };
+  }
+
+  @Post("prescription-suggestions")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({
+    summary: "AI-powered prescription suggestions based on patient conditions",
+  })
+  prescriptionSuggestions(
+    @TenantId() tenantId: string,
+    @Body() dto: PrescriptionSuggestionsDto,
+  ) {
+    return this.svc.getPrescriptionSuggestions(
+      "",
+      tenantId,
+      dto.conditions ?? [],
+      dto.diagnosis ?? "",
+      dto.observations,
+      dto.ageInYears,
+      dto.gender,
+    );
+  }
+}

@@ -307,4 +307,153 @@ export class AiService {
   async invalidateCache(patientId: string, tenantId: string) {
     await this.redis.del(`ai_summary:${tenantId}:${patientId}`);
   }
+
+  // ── AI prescription suggestions ───────────────────────────────────────────────
+
+  async getPrescriptionSuggestions(params: {
+    conditions: string[];
+    diagnosis: string;
+    observations?: string;
+    ageInYears?: number;
+    gender?: string;
+  }) {
+    const { conditions, diagnosis, observations, ageInYears, gender } = params;
+
+    const prompt = `You are a clinical pharmacology assistant. A doctor needs prescription suggestions.
+
+Patient profile (de-identified):
+- Age: ${ageInYears ?? "Unknown"} years
+- Gender: ${gender ?? "Unknown"}
+- Chronic conditions: ${conditions.length ? conditions.join(", ") : "None recorded"}
+- Current diagnosis: ${diagnosis || "Not specified"}
+- Observations: ${observations || "None"}
+
+Suggest up to 5 appropriate medicines for the prescription. For each:
+1. Use the generic name (INN)
+2. Include typical adult dosage, frequency, and duration
+3. Flag any important contraindications given the patient's conditions
+4. Prefer first-line evidence-based options
+
+Return ONLY a valid JSON array (no markdown, no explanation):
+[{"name":"...","dosage":"...","frequency":"...","duration":"...","notes":"..."}]`;
+
+    try {
+      const response = await this.client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 700,
+        system:
+          "You are a clinical pharmacology assistant. Return only valid JSON. No markdown code blocks.",
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const block = response.content.find((b) => b.type === "text");
+      const raw = block?.type === "text" ? block.text.trim() : "[]";
+
+      // Strip markdown code fences if model wraps the JSON
+      const clean = raw
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+
+      let suggestions: unknown[];
+      try {
+        suggestions = JSON.parse(clean);
+        if (!Array.isArray(suggestions)) suggestions = [];
+      } catch {
+        suggestions = [];
+      }
+
+      return { suggestions: suggestions.slice(0, 5) };
+    } catch (err: any) {
+      this.logger.error("[AI] Prescription suggestions failed:", err?.message);
+      return { suggestions: [] };
+    }
+  }
+
+  // ── AI population-level insights for analytics ────────────────────────────────
+
+  async getPopulationInsights(
+    payload: {
+      totalPatients: number;
+      patientsWithConditionTags: number;
+      conditionDistribution: Array<{
+        condition: string;
+        count: number;
+        percentage: number;
+      }>;
+      topPrescribedMedicinesPerCondition: Array<{
+        condition: string;
+        topMedicines: string[];
+      }>;
+    },
+    tenantId: string,
+    requestUserId: string,
+  ) {
+    const cacheKey = `ai_population_insights:${tenantId}`;
+
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return { ...JSON.parse(cached), fromCache: true };
+
+    const userMessage = `Analyse this de-identified patient population data and generate actionable clinical insights for the medical team:
+
+${JSON.stringify(payload, null, 2)}
+
+Provide insights in exactly this structure:
+
+## Population Overview
+[2-3 sentences about the overall patient population composition]
+
+## Key Clinical Patterns
+[3-5 bullets: notable disease clustering, co-morbidity patterns, or prescription trends]
+
+## High-Risk Groups
+[2-3 bullets: conditions or combinations that may need proactive management]
+
+## Prescription Intelligence
+[2-3 bullets: interesting patterns in prescribing behaviour, potential optimisations]
+
+## Recommended Focus Areas
+[3 actionable recommendations for the clinical team based on these patterns]
+
+---
+*AI-generated population analysis — for clinical governance reference only.*`;
+
+    try {
+      const response = await this.client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 900,
+        system:
+          "You are a medical analytics AI. Analyse population-level de-identified clinical data. Use hedged language. Never reference individual patients.",
+        messages: [{ role: "user", content: userMessage }],
+      });
+
+      const block = response.content.find((b) => b.type === "text");
+      const rawInsights = block?.type === "text" ? block.text : "";
+      const insights = this.sanitiseOutput(rawInsights);
+
+      const result = {
+        insights,
+        generatedAt: new Date().toISOString(),
+        fromCache: false,
+      };
+
+      // Cache for 6 hours
+      await this.redis.setex(cacheKey, 21_600, JSON.stringify(result));
+
+      await this.audit.log({
+        tenantId,
+        userId: requestUserId,
+        action: "AI_POPULATION_INSIGHTS",
+        entityType: "Tenant",
+        entityId: tenantId,
+        description: `AI population analytics generated for ${payload.totalPatients} patients`,
+        metadata: { model: "claude-haiku-4-5-20251001" },
+      });
+
+      return result;
+    } catch (err: any) {
+      this.logger.error("[AI] Population insights failed:", err?.message);
+      throw err;
+    }
+  }
 }

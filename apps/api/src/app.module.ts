@@ -42,6 +42,7 @@ import { WhatsappModule } from "./whatsapp/whatsapp.module";
 
 // Analytics
 import { StatsModule } from "./stats/stats.module";
+import { AnalyticsModule } from "./analytics/analytics.module";
 
 // Patient Portal
 import { PatientPortalModule } from "./patient-portal/patient-portal.module";
@@ -137,6 +138,7 @@ import { AiModule } from "./ai/ai.module";
 
     // ── Analytics ────────────────────────────────────────────────────────────────
     StatsModule,
+    AnalyticsModule,
 
     // ── Patient Portal ────────────────────────────────────────────────────────────
     PatientPortalModule,

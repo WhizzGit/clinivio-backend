@@ -1,16 +1,46 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
-import { Patient, PatientFamily, Consultation, LabOrder, TenantEntityManager, ILike, In } from '@mediflow/database';
-import { CreatePatientDto } from './dto/create-patient.dto';
-import { UpdatePatientDto } from './dto/update-patient.dto';
-import { KafkaProducerService } from '../kafka/kafka-producer.service';
-import { KAFKA_TOPICS } from '@mediflow/shared';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
+import { v4 as uuidv4 } from "uuid";
+import {
+  Patient,
+  PatientFamily,
+  Consultation,
+  LabOrder,
+  TenantEntityManager,
+  ILike,
+  In,
+} from "@mediflow/database";
+import { CreatePatientDto } from "./dto/create-patient.dto";
+import { UpdatePatientDto } from "./dto/update-patient.dto";
+import { KafkaProducerService } from "../kafka/kafka-producer.service";
+import { KAFKA_TOPICS } from "@mediflow/shared";
 
 const PATIENT_SELECT: (keyof Patient)[] = [
-  'id', 'tenantId', 'familyId', 'uhid', 'firstName', 'lastName',
-  'phone', 'whatsappPhone', 'hasWhatsapp', 'email', 'dob', 'gender',
-  'bloodGroup', 'abhaId', 'preferredLanguage', 'address',
-  'emergencyContactName', 'emergencyContactPhone', 'consentGivenAt', 'isActive', 'createdAt',
+  "id",
+  "tenantId",
+  "familyId",
+  "uhid",
+  "firstName",
+  "lastName",
+  "phone",
+  "whatsappPhone",
+  "hasWhatsapp",
+  "email",
+  "dob",
+  "gender",
+  "bloodGroup",
+  "abhaId",
+  "preferredLanguage",
+  "address",
+  "emergencyContactName",
+  "emergencyContactPhone",
+  "consentGivenAt",
+  "isActive",
+  "createdAt",
+  "conditions",
 ];
 
 @Injectable()
@@ -23,7 +53,7 @@ export class PatientsService {
   private async generateUHID(tenantId: string): Promise<string> {
     const year = new Date().getFullYear();
     const count = await this.db.repo(Patient).count({ where: { tenantId } });
-    return `MF-${year}-${String(count + 1).padStart(6, '0')}`;
+    return `MF-${year}-${String(count + 1).padStart(6, "0")}`;
   }
 
   async create(tenantId: string, dto: CreatePatientDto) {
@@ -35,9 +65,11 @@ export class PatientsService {
         where: { tenantId, whatsappPhone },
       });
       if (!family) {
-        family = await this.db.repo(PatientFamily).save(
-          this.db.repo(PatientFamily).create({ tenantId, whatsappPhone }),
-        );
+        family = await this.db
+          .repo(PatientFamily)
+          .save(
+            this.db.repo(PatientFamily).create({ tenantId, whatsappPhone }),
+          );
       }
       familyId = family.id;
     }
@@ -58,26 +90,27 @@ export class PatientsService {
         gender: dto.gender as any,
         bloodGroup: dto.bloodGroup,
         abhaId: dto.abhaId,
-        preferredLanguage: (dto.preferredLanguage as any) ?? 'EN',
+        preferredLanguage: (dto.preferredLanguage as any) ?? "EN",
         address: dto.address,
         emergencyContactName: dto.emergencyContactName,
         emergencyContactPhone: dto.emergencyContactPhone,
         consentGivenAt: dto.consentGiven ? new Date() : null,
-        consentVersion: dto.consentGiven ? '1.0' : null,
+        consentVersion: dto.consentGiven ? "1.0" : null,
       }),
     );
 
     // Set as primary patient if family has none
-    await this.db.repo(PatientFamily)
+    await this.db
+      .repo(PatientFamily)
       .createQueryBuilder()
       .update()
       .set({ primaryPatientId: patient.id })
-      .where('id = :id AND primary_patient_id IS NULL', { id: familyId })
+      .where("id = :id AND primary_patient_id IS NULL", { id: familyId })
       .execute();
 
     await this.kafka.emit(KAFKA_TOPICS.PATIENT_REGISTERED, {
       eventId: uuidv4(),
-      eventType: 'patient.registered',
+      eventType: "patient.registered",
       tenantId,
       timestamp: new Date().toISOString(),
       data: {
@@ -87,7 +120,7 @@ export class PatientsService {
         whatsappPhone: patient.whatsappPhone,
         hasWhatsapp: patient.hasWhatsapp,
         familyId: patient.familyId,
-        name: `${patient.firstName} ${patient.lastName ?? ''}`.trim(),
+        name: `${patient.firstName} ${patient.lastName ?? ""}`.trim(),
         uhid: patient.uhid,
         preferredLanguage: patient.preferredLanguage,
       },
@@ -103,17 +136,20 @@ export class PatientsService {
       select: PATIENT_SELECT,
       skip,
       take: limit,
-      order: { createdAt: 'DESC' },
+      order: { createdAt: "DESC" },
     });
-    return { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    return {
+      data,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async findById(id: string, tenantId: string) {
     const patient = await this.db.repo(Patient).findOne({
       where: { id, tenantId },
-      relations: ['family'],
+      relations: ["family"],
     });
-    if (!patient) throw new NotFoundException('Patient not found');
+    if (!patient) throw new NotFoundException("Patient not found");
     return patient;
   }
 
@@ -125,7 +161,7 @@ export class PatientsService {
       ],
       select: PATIENT_SELECT,
     });
-    if (!patient) throw new NotFoundException('Patient not found');
+    if (!patient) throw new NotFoundException("Patient not found");
     return patient;
   }
 
@@ -133,18 +169,19 @@ export class PatientsService {
     const members = await this.db.repo(Patient).find({
       where: { familyId, tenantId, isActive: true },
       select: PATIENT_SELECT,
-      order: { createdAt: 'ASC' },
+      order: { createdAt: "ASC" },
     });
-    if (!members.length) throw new NotFoundException('Family group not found');
+    if (!members.length) throw new NotFoundException("Family group not found");
     return members;
   }
 
   async findFamilyByWhatsapp(whatsappPhone: string, tenantId: string) {
     const family = await this.db.repo(PatientFamily).findOne({
       where: { whatsappPhone, tenantId },
-      relations: ['patients'],
+      relations: ["patients"],
     });
-    if (!family) throw new NotFoundException('No family found for this WhatsApp number');
+    if (!family)
+      throw new NotFoundException("No family found for this WhatsApp number");
     return family;
   }
 
@@ -162,7 +199,10 @@ export class PatientsService {
       skip,
       take: limit,
     });
-    return { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    return {
+      data,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async update(id: string, tenantId: string, dto: UpdatePatientDto) {
@@ -186,37 +226,59 @@ export class PatientsService {
 
   async updateConsent(id: string, tenantId: string) {
     await this.findById(id, tenantId);
-    await this.db.repo(Patient).update(id, { consentGivenAt: new Date(), consentVersion: '1.0' });
+    await this.db
+      .repo(Patient)
+      .update(id, { consentGivenAt: new Date(), consentVersion: "1.0" });
     return this.findById(id, tenantId);
   }
 
-  async getConsultationHistory(patientId: string, tenantId: string, page = 1, limit = 20) {
+  async updateConditions(id: string, tenantId: string, conditions: string[]) {
+    await this.findById(id, tenantId);
+    const clean = [...new Set(conditions.map((c) => c.trim()).filter(Boolean))];
+    await this.db.repo(Patient).update(id, { conditions: clean });
+    return this.findById(id, tenantId);
+  }
+
+  async getConsultationHistory(
+    patientId: string,
+    tenantId: string,
+    page = 1,
+    limit = 20,
+  ) {
     const skip = (page - 1) * limit;
     const [consultations] = await this.db.repo(Consultation).findAndCount({
       where: { patientId, tenantId },
-      relations: ['appointment', 'doctor', 'prescriptions', 'prescriptions.items'],
-      order: { createdAt: 'DESC' },
+      relations: [
+        "appointment",
+        "doctor",
+        "prescriptions",
+        "prescriptions.items",
+      ],
+      order: { createdAt: "DESC" },
       skip,
       take: limit,
     });
 
-    const apptIds = consultations.map(c => c.appointmentId).filter(Boolean) as string[];
+    const apptIds = consultations
+      .map((c) => c.appointmentId)
+      .filter(Boolean) as string[];
     if (!apptIds.length) return consultations;
 
     const labOrders = await this.db.repo(LabOrder).find({
       where: { tenantId, appointmentId: In(apptIds) },
-      relations: ['items', 'items.labTest'],
-      order: { createdAt: 'DESC' },
+      relations: ["items", "items.labTest"],
+      order: { createdAt: "DESC" },
     });
 
     const ordersMap = new Map<string, typeof labOrders>();
     for (const order of labOrders) {
       if (!order.appointmentId) continue;
-      if (!ordersMap.has(order.appointmentId)) ordersMap.set(order.appointmentId, []);
+      if (!ordersMap.has(order.appointmentId))
+        ordersMap.set(order.appointmentId, []);
       ordersMap.get(order.appointmentId)!.push(order);
     }
 
-    return consultations.map(c => ({
+    return consultations.map((c) => ({
       ...c,
       labOrders: ordersMap.get(c.appointmentId!) ?? [],
     }));
