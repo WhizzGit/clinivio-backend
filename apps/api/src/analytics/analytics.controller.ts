@@ -2,7 +2,6 @@ import {
   Controller,
   Get,
   Post,
-  Param,
   Query,
   Body,
   Request,
@@ -31,8 +30,14 @@ export class AnalyticsController {
   @Get("conditions")
   @Roles("ADMIN", "DOCTOR")
   @ApiOperation({ summary: "Patient condition distribution across the tenant" })
-  conditionDistribution(@TenantId() tenantId: string) {
-    return this.svc.getConditionDistribution(tenantId);
+  conditionDistribution(
+    @TenantId() tenantId: string,
+    @Query("mine") mine: string,
+    @Request() req: any,
+  ) {
+    const doctorId =
+      mine === "true" ? (req.user?.sub ?? req.user?.id) : undefined;
+    return this.svc.getConditionDistribution(tenantId, doctorId);
   }
 
   @Get("medicine-patterns")
@@ -43,8 +48,12 @@ export class AnalyticsController {
   medicinePatterns(
     @TenantId() tenantId: string,
     @Query("condition") condition?: string,
+    @Query("mine") mine?: string,
+    @Request() req?: any,
   ) {
-    return this.svc.getMedicinePatterns(tenantId, condition);
+    const doctorId =
+      mine === "true" ? (req?.user?.sub ?? req?.user?.id) : undefined;
+    return this.svc.getMedicinePatterns(tenantId, condition, doctorId);
   }
 
   @Get("vital-trends")
@@ -55,8 +64,12 @@ export class AnalyticsController {
   vitalTrends(
     @TenantId() tenantId: string,
     @Query("condition") condition: string,
+    @Query("mine") mine?: string,
+    @Request() req?: any,
   ) {
-    return this.svc.getVitalTrends(tenantId, condition);
+    const doctorId =
+      mine === "true" ? (req?.user?.sub ?? req?.user?.id) : undefined;
+    return this.svc.getVitalTrends(tenantId, condition, doctorId);
   }
 
   @Get("ai-insights")
@@ -64,8 +77,24 @@ export class AnalyticsController {
   @ApiOperation({
     summary: "AI-generated population-level insights (cached 6h)",
   })
-  aiInsights(@TenantId() tenantId: string, @Request() req: any) {
-    return this.svc.getAiInsights(tenantId, req.user?.sub ?? req.user?.id);
+  aiInsights(
+    @TenantId() tenantId: string,
+    @Request() req: any,
+    @Query("mine") mine?: string,
+  ) {
+    const userId = req.user?.sub ?? req.user?.id;
+    const doctorId = mine === "true" ? userId : undefined;
+    return this.svc.getAiInsights(tenantId, userId, doctorId);
+  }
+
+  @Get("my-stats")
+  @Roles("DOCTOR")
+  @ApiOperation({
+    summary: "Doctor's own consultation, prescription and patient counts",
+  })
+  myStats(@TenantId() tenantId: string, @Request() req: any) {
+    const doctorId = req.user?.sub ?? req.user?.id;
+    return this.svc.getDoctorStats(tenantId, doctorId);
   }
 
   @Get("common-conditions")

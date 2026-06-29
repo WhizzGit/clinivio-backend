@@ -250,7 +250,7 @@ export class AiService {
       .filter(Boolean) as string[];
     const labOrders = apptIds.length
       ? await tenantDs.getRepository(LabOrder).find({
-          where: { appointmentId: In(apptIds), tenantId },
+          where: { appointmentId: In(apptIds) as any, tenantId },
           relations: ["items", "items.labTest"],
         })
       : [];
@@ -385,11 +385,13 @@ Return ONLY a valid JSON array (no markdown, no explanation):
         condition: string;
         topMedicines: string[];
       }>;
+      scope?: string;
     },
     tenantId: string,
     requestUserId: string,
+    overrideCacheKey?: string,
   ) {
-    const cacheKey = `ai_population_insights:${tenantId}`;
+    const cacheKey = overrideCacheKey ?? `ai_population_insights:${tenantId}`;
 
     const cached = await this.redis.get(cacheKey);
     if (cached) return { ...JSON.parse(cached), fromCache: true };

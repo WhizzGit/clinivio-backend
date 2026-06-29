@@ -5,6 +5,7 @@ import {
   Prescription,
   PrescriptionItem,
   Consultation,
+  Appointment,
   TenantEntityManager,
 } from "@mediflow/database";
 import { AiService } from "../ai/ai.service";
@@ -69,12 +70,50 @@ export class AnalyticsService {
     private readonly ai: AiService,
   ) {}
 
+  // ── Doctor-scoped patient ID list ─────────────────────────────────────────────
+
+  private async getDoctorPatientIds(
+    tenantId: string,
+    doctorId: string,
+  ): Promise<string[]> {
+    const appts = await this.db.repo(Appointment).find({
+      where: { tenantId, doctorId },
+      select: ["patientId"],
+    });
+    return [...new Set(appts.map((a) => a.patientId))];
+  }
+
+  // ── Doctor stats (for "My Analytics" view) ────────────────────────────────────
+
+  async getDoctorStats(tenantId: string, doctorId: string) {
+    const [totalConsultations, totalPrescriptions, appts] = await Promise.all([
+      this.db.repo(Consultation).count({ where: { tenantId, doctorId } }),
+      this.db.repo(Prescription).count({ where: { tenantId, doctorId } }),
+      this.db.repo(Appointment).find({
+        where: { tenantId, doctorId },
+        select: ["patientId"],
+      }),
+    ]);
+    const uniquePatients = new Set(appts.map((a) => a.patientId)).size;
+    return { totalConsultations, totalPrescriptions, uniquePatients };
+  }
+
   // ── Condition distribution ────────────────────────────────────────────────────
 
-  async getConditionDistribution(tenantId: string) {
+  async getConditionDistribution(tenantId: string, doctorId?: string) {
+    let scopedIds: string[] | undefined;
+    if (doctorId) {
+      scopedIds = await this.getDoctorPatientIds(tenantId, doctorId);
+      if (!scopedIds.length)
+        return { totalPatients: 0, patientsTagged: 0, distribution: [] };
+    }
+
+    const patientWhere: any = { tenantId, isActive: true };
+    if (scopedIds) patientWhere.id = In(scopedIds);
+
     const patients = await this.db.repo(Patient).find({
-      where: { tenantId, isActive: true },
-      select: ["id", "conditions"],
+      where: patientWhere,
+      select: ["id", "conditions"] as any,
     });
 
     const counts: Record<string, number> = {};
@@ -101,10 +140,28 @@ export class AnalyticsService {
 
   // ── Top prescribed medicines per condition ────────────────────────────────────
 
-  async getMedicinePatterns(tenantId: string, condition?: string) {
+  async getMedicinePatterns(
+    tenantId: string,
+    condition?: string,
+    doctorId?: string,
+  ) {
+    let scopedIds: string[] | undefined;
+    if (doctorId) {
+      scopedIds = await this.getDoctorPatientIds(tenantId, doctorId);
+      if (!scopedIds.length)
+        return {
+          condition: condition ?? "All",
+          patientCount: 0,
+          medicines: [],
+        };
+    }
+
+    const patientWhere2: any = { tenantId, isActive: true };
+    if (scopedIds) patientWhere2.id = In(scopedIds);
+
     const patients = await this.db.repo(Patient).find({
-      where: { tenantId, isActive: true },
-      select: ["id", "conditions"],
+      where: patientWhere2,
+      select: ["id", "conditions"] as any,
     });
 
     const targetIds = condition
@@ -116,8 +173,11 @@ export class AnalyticsService {
     if (!targetIds.length)
       return { condition: condition ?? "All", medicines: [] };
 
+    const prescriptionWhere: any = { tenantId, patientId: In(targetIds) };
+    if (doctorId) prescriptionWhere.doctorId = doctorId;
+
     const prescriptions = await this.db.repo(Prescription).find({
-      where: { tenantId, patientId: In(targetIds) },
+      where: prescriptionWhere,
       relations: ["items"],
     });
 
@@ -143,20 +203,44 @@ export class AnalyticsService {
 
   // ── Vital trends for a condition ──────────────────────────────────────────────
 
-  async getVitalTrends(tenantId: string, condition: string) {
+  async getVitalTrends(tenantId: string, condition: string, doctorId?: string) {
+    let scopedIds: string[] | undefined;
+    if (doctorId) {
+      scopedIds = await this.getDoctorPatientIds(tenantId, doctorId);
+      if (!scopedIds.length)
+        return {
+          condition,
+          patientCount: 0,
+          consultationCount: 0,
+          averageVitals: {},
+        };
+    }
+
+    const patientWhere3: any = { tenantId, isActive: true };
+    if (scopedIds) patientWhere3.id = In(scopedIds);
+
     const patients = await this.db.repo(Patient).find({
-      where: { tenantId, isActive: true },
-      select: ["id", "conditions"],
+      where: patientWhere3,
+      select: ["id", "conditions"] as any,
     });
 
     const targetIds = patients
       .filter((p) => (p.conditions ?? []).includes(condition))
       .map((p) => p.id);
 
-    if (!targetIds.length) return { condition, vitals: {} };
+    if (!targetIds.length)
+      return {
+        condition,
+        patientCount: 0,
+        consultationCount: 0,
+        averageVitals: {},
+      };
+
+    const consultationWhere: any = { tenantId, patientId: In(targetIds) };
+    if (doctorId) consultationWhere.doctorId = doctorId;
 
     const consultations = await this.db.repo(Consultation).find({
-      where: { tenantId, patientId: In(targetIds) },
+      where: consultationWhere,
       select: [
         "bpSystolic",
         "bpDiastolic",
@@ -231,15 +315,23 @@ export class AnalyticsService {
 
   // ── AI population insights ─────────────────────────────────────────────────────
 
-  async getAiInsights(tenantId: string, requestUserId: string) {
+  async getAiInsights(
+    tenantId: string,
+    requestUserId: string,
+    doctorId?: string,
+  ) {
     const { totalPatients, patientsTagged, distribution } =
-      await this.getConditionDistribution(tenantId);
+      await this.getConditionDistribution(tenantId, doctorId);
 
     const topConditions = distribution.slice(0, 8);
 
     const topMeds: Array<{ condition: string; topMedicines: string[] }> = [];
     for (const { condition } of topConditions.slice(0, 5)) {
-      const { medicines } = await this.getMedicinePatterns(tenantId, condition);
+      const { medicines } = await this.getMedicinePatterns(
+        tenantId,
+        condition,
+        doctorId,
+      );
       topMeds.push({
         condition,
         topMedicines: medicines.slice(0, 5).map((m) => m.medicine),
@@ -251,9 +343,18 @@ export class AnalyticsService {
       patientsWithConditionTags: patientsTagged,
       conditionDistribution: topConditions,
       topPrescribedMedicinesPerCondition: topMeds,
+      scope: doctorId ? "doctor's own patients" : "entire hospital",
     };
 
-    return this.ai.getPopulationInsights(payload, tenantId, requestUserId);
+    const cacheKey = doctorId
+      ? `ai_population_insights:${tenantId}:${doctorId}`
+      : undefined;
+    return this.ai.getPopulationInsights(
+      payload,
+      tenantId,
+      requestUserId,
+      cacheKey,
+    );
   }
 
   // ── AI prescription suggestions ───────────────────────────────────────────────
