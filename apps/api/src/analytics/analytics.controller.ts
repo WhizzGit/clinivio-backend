@@ -123,4 +123,17 @@ export class AnalyticsController {
       dto.gender,
     );
   }
+
+  @Get("age-distribution")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({ summary: "Patient age group distribution" })
+  ageDistribution(
+    @TenantId() tenantId: string,
+    @Query("mine") mine?: string,
+    @Request() req?: any,
+  ) {
+    const doctorId =
+      mine === "true" ? (req?.user?.sub ?? req?.user?.id) : undefined;
+    return this.svc.getAgeDistribution(tenantId, doctorId);
+  }
 }

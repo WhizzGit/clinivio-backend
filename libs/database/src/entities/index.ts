@@ -33,7 +33,12 @@ import { Appointment } from "./appointment.entity";
 import { Consultation } from "./consultation.entity";
 import { Prescription, PrescriptionItem } from "./prescription.entity";
 import { FollowUp } from "./follow-up.entity";
-import { PharmacyOrder, PharmacyInventory } from "./pharmacy.entity";
+import {
+  PharmacyOrder,
+  PharmacyInventory,
+  PharmacyPurchase,
+  PharmacyPurchaseItem,
+} from "./pharmacy.entity";
 import { Invoice } from "./invoice.entity";
 import { NotificationLog } from "./notification-log.entity";
 import {
@@ -66,6 +71,8 @@ export const ALL_ENTITIES = [
   FollowUp,
   PharmacyOrder,
   PharmacyInventory,
+  PharmacyPurchase,
+  PharmacyPurchaseItem,
   Invoice,
   NotificationLog,
   Room,

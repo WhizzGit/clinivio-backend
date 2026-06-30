@@ -9,6 +9,7 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
   UseGuards,
+  Request,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
@@ -19,6 +20,7 @@ import {
   UpdateInventoryItemDto,
   UpdatePharmacyOrderDto,
   DispenseOrderDto,
+  CreatePurchaseDto,
 } from "./pharmacy.service";
 
 @ApiTags("Pharmacy")
@@ -106,14 +108,14 @@ export class PharmacyController {
   }
 
   @Get("inventory/low-stock")
-  @Roles("ADMIN", "RECEPTIONIST", "PHARMACIST")
+  @Roles("ADMIN", "RECEPTIONIST", "PHARMACIST", "DOCTOR")
   @ApiOperation({ summary: "Get low stock items" })
   lowStock(@TenantId() tenantId: string) {
     return this.svc.getLowStockItems(tenantId);
   }
 
   @Get("inventory/expiring")
-  @Roles("ADMIN", "RECEPTIONIST", "PHARMACIST")
+  @Roles("ADMIN", "RECEPTIONIST", "PHARMACIST", "DOCTOR")
   @ApiOperation({ summary: "Get items expiring soon" })
   expiring(
     @TenantId() tenantId: string,
@@ -171,5 +173,49 @@ export class PharmacyController {
     return {
       message: "Use PATCH /tenants/:id/profile to update pharmacy settings",
     };
+  }
+
+  // ─── Alerts (doctor-visible) ──────────────────────────────────────────────────
+
+  @Get("alerts")
+  @Roles("ADMIN", "PHARMACIST", "DOCTOR")
+  @ApiOperation({ summary: "Consolidated low-stock and expiring-soon alerts" })
+  getAlerts(@TenantId() tenantId: string) {
+    return this.svc.getAlerts(tenantId);
+  }
+
+  // ─── Purchase Invoices ────────────────────────────────────────────────────────
+
+  @Get("purchases")
+  @Roles("ADMIN", "PHARMACIST")
+  @ApiOperation({ summary: "List purchase invoices" })
+  listPurchases(
+    @TenantId() tenantId: string,
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("limit", new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.svc.listPurchases(tenantId, page, limit);
+  }
+
+  @Post("purchases")
+  @Roles("ADMIN", "PHARMACIST")
+  @ApiOperation({ summary: "Record a purchase invoice (auto-updates stock)" })
+  createPurchase(
+    @TenantId() tenantId: string,
+    @Body() dto: CreatePurchaseDto,
+    @Request() req: any,
+  ) {
+    return this.svc.createPurchase(
+      tenantId,
+      dto,
+      req.user?.sub ?? req.user?.id,
+    );
+  }
+
+  @Get("purchases/:id")
+  @Roles("ADMIN", "PHARMACIST")
+  @ApiOperation({ summary: "Get purchase invoice by ID" })
+  getPurchase(@Param("id") id: string, @TenantId() tenantId: string) {
+    return this.svc.getPurchaseById(id, tenantId);
   }
 }

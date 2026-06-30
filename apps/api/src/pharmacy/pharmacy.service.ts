@@ -8,14 +8,18 @@ import { DataSource } from "typeorm";
 import {
   PharmacyOrder,
   PharmacyInventory,
+  PharmacyPurchase,
+  PharmacyPurchaseItem,
   Appointment,
   Invoice,
+  Patient,
   Tenant,
   PharmacyOrderStatus,
   InvoiceType,
   PaymentStatus,
   TenantEntityManager,
   ILike,
+  LessThanOrEqual,
 } from "@mediflow/database";
 
 export class CreateInventoryItemDto {
@@ -65,6 +69,28 @@ export class DispenseOrderDto {
   items: DispenseItemDto[];
   paymentMethod: "CASH" | "CARD" | "UPI" | "ONLINE";
   dispenserNotes?: string;
+}
+
+export class CreatePurchaseItemDto {
+  inventoryId?: string;
+  medicineName: string;
+  batchNo?: string;
+  expiryDate?: string;
+  quantity: number;
+  freeQty?: number;
+  purchasePrice: number;
+  mrp?: number;
+  sellingPrice?: number;
+  discountPercent?: number;
+  gstRate?: number;
+}
+
+export class CreatePurchaseDto {
+  vendorName: string;
+  invoiceNo?: string;
+  purchaseDate: string;
+  notes?: string;
+  items: CreatePurchaseItemDto[];
 }
 
 @Injectable()
@@ -388,11 +414,9 @@ export class PharmacyService {
     // Validate each inventory item and check stock
     const resolved: Array<{ inv: PharmacyInventory; quantity: number }> = [];
     for (const dtoItem of dto.items) {
-      const inv = await this.db
-        .repo(PharmacyInventory)
-        .findOne({
-          where: { id: dtoItem.inventoryId, tenantId, isActive: true },
-        });
+      const inv = await this.db.repo(PharmacyInventory).findOne({
+        where: { id: dtoItem.inventoryId, tenantId, isActive: true },
+      });
       if (!inv)
         throw new BadRequestException(
           `Inventory item not found: ${dtoItem.inventoryId}`,
@@ -405,12 +429,10 @@ export class PharmacyService {
     }
 
     // Get tenant default GST rates for fallback
-    const tenant = await this.platformDs
-      .getRepository(Tenant)
-      .findOne({
-        where: { id: tenantId },
-        select: ["id", "cgstRate", "sgstRate"],
-      });
+    const tenant = await this.platformDs.getRepository(Tenant).findOne({
+      where: { id: tenantId },
+      select: ["id", "cgstRate", "sgstRate"],
+    });
     const envCgst = parseFloat(process.env.GST_CGST_RATE ?? "0.09") * 100;
     const envSgst = parseFloat(process.env.GST_SGST_RATE ?? "0.09") * 100;
     const defaultCgstPct =
@@ -517,5 +539,124 @@ export class PharmacyService {
     });
 
     return this.findOrderById(id, tenantId);
+  }
+
+  // ── Pharmacy Purchase Invoice ─────────────────────────────────────────────────
+
+  async createPurchase(
+    tenantId: string,
+    dto: CreatePurchaseDto,
+    userId?: string,
+  ) {
+    let totalAmount = 0;
+    const itemEntities: Partial<PharmacyPurchaseItem>[] = [];
+
+    for (const item of dto.items) {
+      const qty = item.quantity + (item.freeQty ?? 0);
+      const discount = item.discountPercent ?? 0;
+      const price = item.purchasePrice * item.quantity * (1 - discount / 100);
+      const gst = item.gstRate ?? 0;
+      const lineTotal = price * (1 + gst / 100);
+      totalAmount += lineTotal;
+
+      itemEntities.push({
+        inventoryId: item.inventoryId ?? null,
+        medicineName: item.medicineName,
+        batchNo: item.batchNo ?? null,
+        expiryDate: item.expiryDate ?? null,
+        quantity: item.quantity,
+        freeQty: item.freeQty ?? 0,
+        purchasePrice: String(item.purchasePrice),
+        mrp: item.mrp ? String(item.mrp) : null,
+        sellingPrice: item.sellingPrice ? String(item.sellingPrice) : null,
+        discountPercent: String(discount),
+        gstRate: item.gstRate ? String(item.gstRate) : null,
+        lineTotal: String(Math.round(lineTotal * 100) / 100),
+      });
+
+      // Auto-update inventory stock and batch/expiry
+      if (item.inventoryId) {
+        const inv = await this.db.repo(PharmacyInventory).findOne({
+          where: { id: item.inventoryId, tenantId },
+        });
+        if (inv) {
+          const updates: Partial<PharmacyInventory> = {
+            stockQty: inv.stockQty + qty,
+          };
+          if (item.batchNo) updates.batchNo = item.batchNo;
+          if (item.expiryDate) updates.expiryDate = item.expiryDate;
+          if (item.mrp) updates.mrp = String(item.mrp);
+          if (item.sellingPrice)
+            updates.sellingPrice = String(item.sellingPrice);
+          await this.db
+            .repo(PharmacyInventory)
+            .update(item.inventoryId, updates);
+        }
+      }
+    }
+
+    const purchase = this.db.repo(PharmacyPurchase).create({
+      tenantId,
+      vendorName: dto.vendorName,
+      invoiceNo: dto.invoiceNo ?? null,
+      purchaseDate: dto.purchaseDate,
+      totalAmount: String(Math.round(totalAmount * 100) / 100),
+      discountAmount: "0",
+      notes: dto.notes ?? null,
+      createdBy: userId ?? null,
+      items: itemEntities as PharmacyPurchaseItem[],
+    });
+
+    return this.db.repo(PharmacyPurchase).save(purchase);
+  }
+
+  async listPurchases(tenantId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await this.db.repo(PharmacyPurchase).findAndCount({
+      where: { tenantId },
+      order: { createdAt: "DESC" },
+      skip,
+      take: limit,
+    });
+    return {
+      data,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async getPurchaseById(id: string, tenantId: string) {
+    const p = await this.db
+      .repo(PharmacyPurchase)
+      .findOne({ where: { id, tenantId } });
+    if (!p) throw new NotFoundException("Purchase not found");
+    return p;
+  }
+
+  // ── Consolidated alerts (doctor-visible) ──────────────────────────────────────
+
+  async getAlerts(tenantId: string) {
+    const threeMonthsFromNow = new Date();
+    threeMonthsFromNow.setDate(threeMonthsFromNow.getDate() + 90);
+
+    const [lowStock, expiring] = await Promise.all([
+      this.getLowStockItems(tenantId),
+      this.db.repo(PharmacyInventory).find({
+        where: {
+          tenantId,
+          isActive: true,
+          expiryDate: LessThanOrEqual(
+            threeMonthsFromNow.toISOString().slice(0, 10),
+          ),
+        },
+        order: { expiryDate: "ASC" },
+        take: 20,
+      }),
+    ]);
+
+    return {
+      lowStock: lowStock ?? [],
+      expiring,
+      totalAlerts: (lowStock?.length ?? 0) + expiring.length,
+    };
   }
 }

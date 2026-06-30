@@ -376,4 +376,60 @@ export class AnalyticsService {
       gender,
     });
   }
+
+  // ── Age distribution ──────────────────────────────────────────────────────────
+
+  async getAgeDistribution(tenantId: string, doctorId?: string) {
+    let scopedIds: string[] | undefined;
+    if (doctorId) {
+      scopedIds = await this.getDoctorPatientIds(tenantId, doctorId);
+    }
+
+    const patientWhere: any = { tenantId, isActive: true };
+    if (scopedIds) patientWhere.id = In(scopedIds);
+
+    const patients = await this.db.repo(Patient).find({
+      where: patientWhere,
+      select: ["id", "dob"] as any,
+    });
+
+    const buckets: Record<string, number> = {
+      "0–18": 0,
+      "19–30": 0,
+      "31–45": 0,
+      "46–60": 0,
+      "61–75": 0,
+      "76+": 0,
+    };
+
+    const now = Date.now();
+    let unknownCount = 0;
+    for (const p of patients) {
+      if (!p.dob) {
+        unknownCount++;
+        continue;
+      }
+      const age = Math.floor(
+        (now - new Date(p.dob).getTime()) / (365.25 * 24 * 3600 * 1000),
+      );
+      if (age <= 18) buckets["0–18"]++;
+      else if (age <= 30) buckets["19–30"]++;
+      else if (age <= 45) buckets["31–45"]++;
+      else if (age <= 60) buckets["46–60"]++;
+      else if (age <= 75) buckets["61–75"]++;
+      else buckets["76+"]++;
+    }
+
+    return {
+      totalPatients: patients.length,
+      unknownAge: unknownCount,
+      distribution: Object.entries(buckets).map(([ageGroup, count]) => ({
+        ageGroup,
+        count,
+        percentage: patients.length
+          ? Math.round((count / patients.length) * 100)
+          : 0,
+      })),
+    };
+  }
 }
