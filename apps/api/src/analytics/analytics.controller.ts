@@ -4,6 +4,7 @@ import {
   Post,
   Query,
   Body,
+  Param,
   Request,
   UseGuards,
 } from "@nestjs/common";
@@ -135,5 +136,34 @@ export class AnalyticsController {
     const doctorId =
       mine === "true" ? (req?.user?.sub ?? req?.user?.id) : undefined;
     return this.svc.getAgeDistribution(tenantId, doctorId);
+  }
+
+  @Get("lab-summary")
+  @Roles("ADMIN", "DOCTOR")
+  @ApiOperation({
+    summary: "Lab order volume, top tests, completion and abnormal rates",
+  })
+  labSummary(
+    @TenantId() tenantId: string,
+    @Query("days") daysStr?: string,
+    @Query("mine") mine?: string,
+    @Request() req?: any,
+  ) {
+    const doctorId =
+      mine === "true" ? (req?.user?.sub ?? req?.user?.id) : undefined;
+    const days = daysStr ? parseInt(daysStr, 10) : 90;
+    return this.svc.getLabSummary(tenantId, doctorId, isNaN(days) ? 90 : days);
+  }
+
+  @Get("patient-trends/:patientId")
+  @Roles("ADMIN", "DOCTOR", "NURSE")
+  @ApiOperation({
+    summary: "Single-patient vitals timeline and lab results history",
+  })
+  patientTrends(
+    @Param("patientId") patientId: string,
+    @TenantId() tenantId: string,
+  ) {
+    return this.svc.getPatientTrends(patientId, tenantId);
   }
 }

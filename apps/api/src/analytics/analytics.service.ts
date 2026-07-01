@@ -6,6 +6,8 @@ import {
   PrescriptionItem,
   Consultation,
   Appointment,
+  LabOrder,
+  LabOrderItem,
   TenantEntityManager,
 } from "@mediflow/database";
 import { AiService } from "../ai/ai.service";
@@ -375,6 +377,144 @@ export class AnalyticsService {
       ageInYears,
       gender,
     });
+  }
+
+  // ── Lab summary analytics ─────────────────────────────────────────────────────
+
+  async getLabSummary(tenantId: string, doctorId?: string, days = 90) {
+    let scopedIds: string[] | undefined;
+    if (doctorId) {
+      scopedIds = await this.getDoctorPatientIds(tenantId, doctorId);
+      if (!scopedIds.length)
+        return {
+          totalOrders: 0,
+          completedOrders: 0,
+          completionRate: 0,
+          abnormalCount: 0,
+          abnormalRate: 0,
+          topTests: [],
+          dailyVolume: [],
+        };
+    }
+
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const orderWhere: any = { tenantId };
+    if (scopedIds) orderWhere.patientId = In(scopedIds);
+
+    const orders = await this.db.repo(LabOrder).find({
+      where: orderWhere,
+      relations: ["items", "items.labTest"],
+      order: { createdAt: "DESC" },
+      take: 1000,
+    });
+
+    const inPeriod = orders.filter((o) => new Date(o.createdAt) >= since);
+    const totalOrders = inPeriod.length;
+    const completedOrders = inPeriod.filter(
+      (o) => o.status === "COMPLETED",
+    ).length;
+    const completionRate =
+      totalOrders > 0 ? Math.round((completedOrders / totalOrders) * 100) : 0;
+
+    const allItems = inPeriod.flatMap((o) => o.items ?? []);
+    const withResults = allItems.filter((i) => i.result);
+    const abnormalCount = withResults.filter(
+      (i) => i.flag === "ABNORMAL" || i.flag === "CRITICAL",
+    ).length;
+    const abnormalRate =
+      withResults.length > 0
+        ? Math.round((abnormalCount / withResults.length) * 100)
+        : 0;
+
+    const testCounts: Record<string, number> = {};
+    for (const item of allItems) {
+      const name = (item as any).labTest?.name ?? "Unknown";
+      testCounts[name] = (testCounts[name] ?? 0) + 1;
+    }
+    const topTests = Object.entries(testCounts)
+      .map(([test, count]) => ({ test, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    const dailyCounts: Record<string, number> = {};
+    for (const o of inPeriod) {
+      const date = new Date(o.createdAt).toISOString().split("T")[0];
+      dailyCounts[date] = (dailyCounts[date] ?? 0) + 1;
+    }
+    const dailyVolume = Object.entries(dailyCounts)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return {
+      totalOrders,
+      completedOrders,
+      completionRate,
+      abnormalCount,
+      abnormalRate,
+      topTests,
+      dailyVolume,
+    };
+  }
+
+  // ── Single-patient vitals + lab trend ────────────────────────────────────────
+
+  async getPatientTrends(patientId: string, tenantId: string) {
+    const [consultations, labOrders] = await Promise.all([
+      this.db.repo(Consultation).find({
+        where: { patientId, tenantId },
+        select: [
+          "createdAt",
+          "bpSystolic",
+          "bpDiastolic",
+          "pulseRate",
+          "spo2",
+          "bmi",
+          "temperature",
+          "weightKg",
+          "rbsMgDl",
+        ] as any,
+        order: { createdAt: "ASC" },
+        take: 60,
+      }),
+      this.db.repo(LabOrder).find({
+        where: { patientId, tenantId },
+        relations: ["items", "items.labTest"],
+        order: { createdAt: "ASC" },
+        take: 60,
+      }),
+    ]);
+
+    const vitals = consultations.map((c) => ({
+      date: new Date(c.createdAt).toISOString().split("T")[0],
+      bpSystolic: c.bpSystolic ?? null,
+      bpDiastolic: c.bpDiastolic ?? null,
+      pulseRate: c.pulseRate ?? null,
+      spo2: c.spo2 ?? null,
+      bmi: c.bmi ? Number(c.bmi) : null,
+      rbsMgDl: c.rbsMgDl ? Number(c.rbsMgDl) : null,
+      temperature: c.temperature ? Number(c.temperature) : null,
+      weightKg: c.weightKg ? Number(c.weightKg) : null,
+    }));
+
+    const labResults = labOrders
+      .flatMap((o) =>
+        (o.items ?? [])
+          .filter((i: any) => i.result)
+          .map((i: any) => ({
+            date: new Date(o.createdAt).toISOString().split("T")[0],
+            orderNumber: o.orderNumber,
+            test: i.labTest?.name ?? "Unknown",
+            result: i.result,
+            unit: i.unit ?? i.labTest?.unit ?? "",
+            normalRange: i.normalRange ?? i.labTest?.normalRange ?? "",
+            flag: i.flag ?? null,
+          })),
+      )
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return { vitals, labResults };
   }
 
   // ── Age distribution ──────────────────────────────────────────────────────────
