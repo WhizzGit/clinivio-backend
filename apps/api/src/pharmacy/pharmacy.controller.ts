@@ -175,6 +175,20 @@ export class PharmacyController {
     };
   }
 
+  // ─── Analytics ───────────────────────────────────────────────────────────────
+
+  @Get("analytics/dashboard")
+  @Roles("ADMIN", "PHARMACIST", "DOCTOR")
+  @ApiOperation({
+    summary: "Pharmacy analytics: revenue trend and expiry timeline",
+  })
+  analyticsDashboard(
+    @TenantId() tenantId: string,
+    @Query("days", new DefaultValuePipe(30), ParseIntPipe) days: number,
+  ) {
+    return this.svc.getPharmacyAnalytics(tenantId, days);
+  }
+
   // ─── Alerts (doctor-visible) ──────────────────────────────────────────────────
 
   @Get("alerts")

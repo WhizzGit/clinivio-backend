@@ -632,6 +632,78 @@ export class PharmacyService {
     return p;
   }
 
+  async getPharmacyAnalytics(tenantId: string, days = 30) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    // Revenue from pharmacy invoices
+    const invoices = await this.db.repo(Invoice).find({
+      where: { tenantId, invoiceType: InvoiceType.PHARMACY } as any,
+      select: ["totalAmount", "paidAt", "createdAt"] as any,
+      order: { createdAt: "DESC" },
+      take: 2000,
+    });
+
+    const inPeriod = invoices.filter((i) => new Date(i.createdAt) >= since);
+    const totalRevenue = inPeriod.reduce(
+      (s, i) => s + parseFloat((i as any).totalAmount ?? 0),
+      0,
+    );
+
+    const dailyMap: Record<string, { orders: number; revenue: number }> = {};
+    for (const inv of inPeriod) {
+      const date = new Date(inv.createdAt).toISOString().split("T")[0];
+      if (!dailyMap[date]) dailyMap[date] = { orders: 0, revenue: 0 };
+      dailyMap[date].orders++;
+      dailyMap[date].revenue += parseFloat((inv as any).totalAmount ?? 0);
+    }
+    const dailyRevenue = Object.entries(dailyMap)
+      .map(([date, v]) => ({
+        date,
+        orders: v.orders,
+        revenue: Math.round(v.revenue * 100) / 100,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Expiry timeline — items expiring in next 6 months grouped by month
+    const sixMonths = new Date();
+    sixMonths.setDate(sixMonths.getDate() + 180);
+    const expiringItems = await this.db.repo(PharmacyInventory).find({
+      where: {
+        tenantId,
+        isActive: true,
+        expiryDate: LessThanOrEqual(sixMonths.toISOString().slice(0, 10)),
+      },
+      order: { expiryDate: "ASC" },
+      take: 100,
+    });
+
+    const expiryByMonth: Record<string, { count: number; value: number }> = {};
+    for (const item of expiringItems) {
+      if (!item.expiryDate) continue;
+      const month = item.expiryDate.slice(0, 7); // YYYY-MM
+      if (!expiryByMonth[month]) expiryByMonth[month] = { count: 0, value: 0 };
+      expiryByMonth[month].count++;
+      expiryByMonth[month].value +=
+        parseFloat(item.sellingPrice) * item.stockQty;
+    }
+    const expiryTimeline = Object.entries(expiryByMonth)
+      .map(([month, v]) => ({
+        month,
+        count: v.count,
+        value: Math.round(v.value * 100) / 100,
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    return {
+      period: days,
+      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      totalInvoices: inPeriod.length,
+      dailyRevenue,
+      expiryTimeline,
+    };
+  }
+
   // ── Consolidated alerts (doctor-visible) ──────────────────────────────────────
 
   async getAlerts(tenantId: string) {

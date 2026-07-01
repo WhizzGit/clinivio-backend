@@ -51,7 +51,13 @@ import {
   DischargeAdvice,
   DischargeSummary,
 } from "./ipd.entity";
-import { LabTest, LabOrder, LabOrderItem } from "./lab.entity";
+import {
+  LabTest,
+  LabOrder,
+  LabOrderItem,
+  LabReagent,
+  LabReagentUsage,
+} from "./lab.entity";
 import { AuditLog } from "./audit-log.entity";
 
 export const ALL_ENTITIES = [
@@ -86,5 +92,7 @@ export const ALL_ENTITIES = [
   LabTest,
   LabOrder,
   LabOrderItem,
+  LabReagent,
+  LabReagentUsage,
   AuditLog,
 ];

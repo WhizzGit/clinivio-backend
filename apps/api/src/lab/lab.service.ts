@@ -10,6 +10,8 @@ import {
   LabTest,
   LabOrder,
   LabOrderItem,
+  LabReagent,
+  LabReagentUsage,
   Invoice,
   Tenant,
   LabOrderStatus,
@@ -45,6 +47,32 @@ export class UpdateLabOrderItemDto {
   normalRange?: string;
   flag?: LabResultFlag;
   notes?: string;
+}
+
+export class CollectPaymentDto {
+  paymentMethod: "CASH" | "CARD" | "UPI" | "ONLINE";
+  amountPaid: number;
+  waived?: boolean;
+}
+export class MarkOutsourcedDto {
+  externalLabName: string;
+  externalReference?: string;
+}
+export class CreateReagentDto {
+  name: string;
+  unit: string;
+  currentQty?: number;
+  reorderLevel?: number;
+  unitCost?: number;
+  manufacturer?: string;
+  batchNo?: string;
+  expiryDate?: string;
+}
+export class LogReagentUsageDto {
+  quantity: number;
+  type?: "USE" | "RESTOCK" | "DISCARD" | "ADJUST";
+  notes?: string;
+  labOrderId?: string;
 }
 
 @Injectable()
@@ -184,12 +212,10 @@ export class LabService {
     );
     await this.db.repo(LabOrderItem).save(items);
 
-    const tenant = await this.platformDs
-      .getRepository(Tenant)
-      .findOne({
-        where: { id: tenantId },
-        select: ["id", "cgstRate", "sgstRate"],
-      });
+    const tenant = await this.platformDs.getRepository(Tenant).findOne({
+      where: { id: tenantId },
+      select: ["id", "cgstRate", "sgstRate"],
+    });
     const defaultCgst =
       tenant?.cgstRate !== null && tenant?.cgstRate !== undefined
         ? parseFloat(tenant.cgstRate)
@@ -520,6 +546,179 @@ export class LabService {
       criticalItems,
       criticalRate,
       categoryBreakdown,
+    };
+  }
+
+  async collectPayment(
+    orderId: string,
+    tenantId: string,
+    dto: CollectPaymentDto,
+  ) {
+    const order = await this.db
+      .repo(LabOrder)
+      .findOne({ where: { id: orderId, tenantId } });
+    if (!order) throw new NotFoundException("Lab order not found");
+    const status = dto.waived ? "WAIVED" : "PAID";
+    await this.db.repo(LabOrder).update(orderId, {
+      paymentStatus: status,
+      amountPaid: String(dto.amountPaid ?? 0),
+      paymentMethod: dto.waived ? null : (dto.paymentMethod ?? null),
+      paymentCollectedAt: new Date(),
+    } as any);
+    return this.loadOrder(orderId);
+  }
+
+  async markItemOutsourced(
+    orderId: string,
+    itemId: string,
+    tenantId: string,
+    dto: MarkOutsourcedDto,
+  ) {
+    const order = await this.db
+      .repo(LabOrder)
+      .findOne({ where: { id: orderId, tenantId } });
+    if (!order) throw new NotFoundException("Lab order not found");
+    await this.db.repo(LabOrderItem).update(itemId, {
+      isOutsourced: true,
+      externalLabName: dto.externalLabName,
+      externalReference: dto.externalReference ?? null,
+      outsourcedAt: new Date(),
+    } as any);
+    return this.loadOrder(orderId);
+  }
+
+  async listReagents(tenantId: string) {
+    return this.db
+      .repo(LabReagent)
+      .find({ where: { tenantId, isActive: true }, order: { name: "ASC" } });
+  }
+
+  async createReagent(tenantId: string, dto: CreateReagentDto) {
+    return this.db.repo(LabReagent).save(
+      this.db.repo(LabReagent).create({
+        tenantId,
+        name: dto.name,
+        unit: dto.unit,
+        currentQty: String(dto.currentQty ?? 0),
+        reorderLevel: String(dto.reorderLevel ?? 10),
+        unitCost: String(dto.unitCost ?? 0),
+        manufacturer: dto.manufacturer ?? null,
+        batchNo: dto.batchNo ?? null,
+        expiryDate: dto.expiryDate ?? null,
+        isActive: true,
+      }),
+    );
+  }
+
+  async updateReagent(
+    id: string,
+    tenantId: string,
+    dto: Partial<CreateReagentDto>,
+  ) {
+    const r = await this.db
+      .repo(LabReagent)
+      .findOne({ where: { id, tenantId } });
+    if (!r) throw new NotFoundException("Reagent not found");
+    const updates: any = {};
+    if (dto.name !== undefined) updates.name = dto.name;
+    if (dto.unit !== undefined) updates.unit = dto.unit;
+    if (dto.currentQty !== undefined)
+      updates.currentQty = String(dto.currentQty);
+    if (dto.reorderLevel !== undefined)
+      updates.reorderLevel = String(dto.reorderLevel);
+    if (dto.unitCost !== undefined) updates.unitCost = String(dto.unitCost);
+    if (dto.manufacturer !== undefined) updates.manufacturer = dto.manufacturer;
+    if (dto.batchNo !== undefined) updates.batchNo = dto.batchNo;
+    if (dto.expiryDate !== undefined) updates.expiryDate = dto.expiryDate;
+    await this.db.repo(LabReagent).update(id, updates);
+    return this.db.repo(LabReagent).findOne({ where: { id } });
+  }
+
+  async logReagentUsage(
+    reagentId: string,
+    tenantId: string,
+    dto: LogReagentUsageDto,
+    userId?: string,
+  ) {
+    const reagent = await this.db
+      .repo(LabReagent)
+      .findOne({ where: { id: reagentId, tenantId } });
+    if (!reagent) throw new NotFoundException("Reagent not found");
+    const usageType = dto.type ?? "USE";
+    await this.db.repo(LabReagentUsage).save(
+      this.db.repo(LabReagentUsage).create({
+        tenantId,
+        reagentId,
+        labOrderId: dto.labOrderId ?? null,
+        quantity: String(Math.abs(dto.quantity)),
+        type: usageType,
+        notes: dto.notes ?? null,
+        usedBy: userId ?? null,
+      }),
+    );
+    const delta =
+      usageType === "RESTOCK"
+        ? Math.abs(dto.quantity)
+        : -Math.abs(dto.quantity);
+    const newQty = Math.max(0, parseFloat(reagent.currentQty) + delta);
+    await this.db
+      .repo(LabReagent)
+      .update(reagentId, {
+        currentQty: String(Math.round(newQty * 100) / 100),
+      });
+    return this.db.repo(LabReagent).findOne({ where: { id: reagentId } });
+  }
+
+  async getLabDashboard(tenantId: string, days = 30) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const orders = await this.db.repo(LabOrder).find({
+      where: { tenantId },
+      select: [
+        "id",
+        "status",
+        "paymentStatus",
+        "amountPaid",
+        "createdAt",
+      ] as any,
+      order: { createdAt: "DESC" },
+      take: 2000,
+    });
+    const inPeriod = orders.filter((o) => new Date(o.createdAt) >= since);
+    const totalOrders = inPeriod.length;
+    const completedOrders = inPeriod.filter(
+      (o: any) => o.status === "COMPLETED",
+    ).length;
+    const revenue = inPeriod.reduce(
+      (s: number, o: any) => s + parseFloat(o.amountPaid ?? 0),
+      0,
+    );
+    const dailyMap: Record<string, { orders: number; revenue: number }> = {};
+    for (const o of inPeriod) {
+      const date = new Date(o.createdAt).toISOString().split("T")[0];
+      if (!dailyMap[date]) dailyMap[date] = { orders: 0, revenue: 0 };
+      dailyMap[date].orders++;
+      dailyMap[date].revenue += parseFloat((o as any).amountPaid ?? 0);
+    }
+    const daily = Object.entries(dailyMap)
+      .map(([date, v]) => ({ date, ...v }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const reagents = await this.db
+      .repo(LabReagent)
+      .find({ where: { tenantId, isActive: true } });
+    const lowReagents = reagents.filter(
+      (r) => parseFloat(r.currentQty) <= parseFloat(r.reorderLevel),
+    );
+    return {
+      period: days,
+      totalOrders,
+      completedOrders,
+      completionRate:
+        totalOrders > 0 ? Math.round((completedOrders / totalOrders) * 100) : 0,
+      revenue: Math.round(revenue * 100) / 100,
+      daily,
+      lowReagentCount: lowReagents.length,
+      lowReagents: lowReagents.slice(0, 5),
     };
   }
 }
