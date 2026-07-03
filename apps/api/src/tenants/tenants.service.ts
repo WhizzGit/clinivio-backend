@@ -14,6 +14,7 @@ import {
   User,
   Role,
   TenantDataSourceRegistry,
+  ALL_ENTITIES,
 } from "@mediflow/database";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { UpdateTenantDto } from "./dto/update-tenant.dto";
@@ -51,11 +52,12 @@ export class TenantsService {
           };
         }
         try {
-          const tenantDs = await this.registry.getOrCreate(t.id, t.slug);
           const [userCount, adminUser] = await Promise.all([
-            tenantDs.getRepository(User).count({ where: { isActive: true } }),
-            tenantDs.getRepository(User).findOne({
-              where: { role: Role.ADMIN },
+            this.platformDs
+              .getRepository(User)
+              .count({ where: { tenantId: t.id, isActive: true } }),
+            this.platformDs.getRepository(User).findOne({
+              where: { tenantId: t.id, role: Role.ADMIN },
               select: ["email", "firstName", "lastName", "lastLoginAt"],
             }),
           ]);
@@ -69,7 +71,6 @@ export class TenantsService {
             adminLastLogin: adminUser?.lastLoginAt ?? null,
           };
         } catch {
-          // Schema may not exist yet for legacy / failed tenants
           return {
             ...t,
             userCount: 0,
@@ -127,17 +128,10 @@ export class TenantsService {
       }),
     );
 
-    // 4. Create PostgreSQL schema for the tenant
-    await this.platformDs.query(`CREATE SCHEMA IF NOT EXISTS "tenant_${slug}"`);
-    this.logger.log(
-      `Created schema tenant_${slug} for tenant "${tenant.name}"`,
-    );
-
-    // 5. Initialise per-tenant DataSource (synchronize = true in dev → creates tables)
+    // 4. All hospitals share the platform DataSource — no per-tenant schema.
     const tenantDs = await this.registry.getOrCreate(tenant.id, slug);
-    this.logger.log(`DataSource initialised for tenant_${slug}`);
 
-    // 6. Seed the admin user in the tenant schema
+    // 5. Seed the admin user, scoped by tenantId
     const passwordHash = await bcrypt.hash(dto.adminPassword, 12);
     const admin = await tenantDs.getRepository(User).save(
       tenantDs.getRepository(User).create({
@@ -236,7 +230,7 @@ export class TenantsService {
       const userRepo = tenantDs.getRepository(User);
 
       const admin = await userRepo.findOne({
-        where: { role: Role.ADMIN, isActive: true },
+        where: { tenantId: id, role: Role.ADMIN, isActive: true },
       });
       if (!admin) {
         throw new NotFoundException(
@@ -268,7 +262,8 @@ export class TenantsService {
   }
 
   /**
-   * Permanently deletes a tenant — drops its schema and removes the public.tenants row.
+   * Permanently deletes a tenant — removes every row scoped to this tenantId
+   * across all shared tables, then the public.tenants row itself.
    * The platform tenant (slug = null) cannot be deleted.
    */
   async delete(id: string): Promise<{ message: string }> {
@@ -278,18 +273,20 @@ export class TenantsService {
       throw new ForbiddenException("The platform tenant cannot be deleted");
     }
 
-    // 1. Close and evict the cached DataSource for this tenant
     await this.registry.evict(id);
 
-    // 2. Drop the entire PostgreSQL schema (CASCADE removes all tables & data)
-    await this.platformDs.query(
-      `DROP SCHEMA IF EXISTS "tenant_${tenant.slug}" CASCADE`,
+    // Delete child→parent (reverse of ALL_ENTITIES' parent→child order) so
+    // FK-style references never get orphaned mid-transaction.
+    await this.platformDs.transaction(async (manager) => {
+      for (const entity of [...ALL_ENTITIES].reverse()) {
+        if (entity === Tenant) continue;
+        await manager.delete(entity, { tenantId: id } as any);
+      }
+      await manager.delete(Tenant, id);
+    });
+    this.logger.log(
+      `Deleted tenant record ${id} (${tenant.name}) and all scoped rows`,
     );
-    this.logger.log(`Dropped schema tenant_${tenant.slug}`);
-
-    // 3. Remove the tenant record from the public schema
-    await this.tenantRepo.delete(id);
-    this.logger.log(`Deleted tenant record ${id} (${tenant.name})`);
 
     return { message: `Tenant '${tenant.name}' has been permanently deleted` };
   }
@@ -299,7 +296,7 @@ export class TenantsService {
     const tenantDs = await this.registry.getOrCreate(tenant.id, tenant.slug);
 
     const admin = await tenantDs.getRepository(User).findOne({
-      where: { role: Role.ADMIN, isActive: true },
+      where: { tenantId: tenant.id, role: Role.ADMIN, isActive: true },
       select: ["id", "email", "firstName", "lastName"],
     });
     if (!admin)

@@ -5,6 +5,7 @@ import { getDataSourceToken } from "@nestjs/typeorm";
 import { UnauthorizedException } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { AuthService } from "./auth.service";
+import { EmailService } from "../email/email.service";
 import { TenantDataSourceRegistry, User, Tenant } from "@mediflow/database";
 
 // ── Repository mocks ──────────────────────────────────────────────────────────
@@ -42,6 +43,13 @@ const configServiceMock = {
   get: jest.fn().mockReturnValue("mock-secret"),
 };
 
+const emailServiceMock = {
+  sendMail: jest.fn().mockResolvedValue(undefined),
+  buildPasswordResetEmail: jest
+    .fn()
+    .mockReturnValue({ html: "<p>reset</p>", text: "reset" }),
+};
+
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe("AuthService", () => {
@@ -58,6 +66,7 @@ describe("AuthService", () => {
         { provide: TenantDataSourceRegistry, useValue: registryMock },
         { provide: JwtService, useValue: jwtServiceMock },
         { provide: ConfigService, useValue: configServiceMock },
+        { provide: EmailService, useValue: emailServiceMock },
       ],
     }).compile();
 

@@ -10,7 +10,13 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { IsString, IsOptional, IsUUID, MinLength } from "class-validator";
+import {
+  IsEmail,
+  IsString,
+  IsOptional,
+  IsUUID,
+  MinLength,
+} from "class-validator";
 import { AuthService } from "./auth.service";
 import { LocalAuthGuard } from "./guards/local-auth.guard";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
@@ -41,6 +47,24 @@ class RefreshTokenDto {
 class ChangePasswordDto {
   @IsString()
   currentPassword: string;
+
+  @IsString()
+  @MinLength(8)
+  newPassword: string;
+}
+
+class ForgotPasswordDto {
+  @IsEmail()
+  email: string;
+
+  /** Hospital slug — required to scope the lookup to the right tenant */
+  @IsString()
+  slug: string;
+}
+
+class ResetPasswordDto {
+  @IsString()
+  token: string;
 
   @IsString()
   @MinLength(8)
@@ -89,5 +113,23 @@ export class AuthController {
       dto.currentPassword,
       dto.newPassword,
     );
+  }
+
+  @Post("forgot-password")
+  @Throttle({ default: { ttl: 900000, limit: 5 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Request a password reset email" })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email, dto.slug);
+  }
+
+  @Post("reset-password")
+  @Throttle({ default: { ttl: 900000, limit: 5 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Reset password using a token from the reset email",
+  })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 }

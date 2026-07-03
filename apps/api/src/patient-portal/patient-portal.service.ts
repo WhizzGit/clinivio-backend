@@ -114,7 +114,9 @@ export class PatientPortalService {
     const accountRepo = ds.getRepository(PatientAccount);
     const patientRepo = ds.getRepository(Patient);
 
-    const existing = await accountRepo.findOne({ where: { phone: dto.phone } });
+    const existing = await accountRepo.findOne({
+      where: { tenantId: tenant.id, phone: dto.phone },
+    });
     if (existing)
       throw new ConflictException("An account with this phone already exists");
 
@@ -122,7 +124,7 @@ export class PatientPortalService {
 
     if (dto.uhid) {
       const found = await patientRepo.findOne({
-        where: { uhid: dto.uhid, isActive: true },
+        where: { tenantId: tenant.id, uhid: dto.uhid, isActive: true },
       });
       if (!found)
         throw new NotFoundException(`Patient with UHID ${dto.uhid} not found`);
@@ -133,7 +135,7 @@ export class PatientPortalService {
       }
       patient = found;
     } else {
-      const count = await patientRepo.count();
+      const count = await patientRepo.count({ where: { tenantId: tenant.id } });
       const uhid = `UHID-${String(count + 1).padStart(6, "0")}`;
       patient = await patientRepo.save(
         patientRepo.create({
@@ -176,11 +178,11 @@ export class PatientPortalService {
   }
 
   async login(dto: PatientLoginDto) {
-    const { ds } = await this.getDsBySlug(dto.slug);
+    const { ds, tenant } = await this.getDsBySlug(dto.slug);
     const accountRepo = ds.getRepository(PatientAccount);
 
     const account = await accountRepo.findOne({
-      where: { phone: dto.phone, isActive: true },
+      where: { tenantId: tenant.id, phone: dto.phone, isActive: true },
       relations: ["patient"],
     });
     if (!account) throw new UnauthorizedException("Invalid phone or password");
@@ -272,7 +274,7 @@ export class PatientPortalService {
 
     if (dto.slotId) {
       const slot = await ds.getRepository(DoctorSlot).findOne({
-        where: { id: dto.slotId, isBlocked: false },
+        where: { id: dto.slotId, tenantId, isBlocked: false },
       });
       if (!slot)
         throw new BadRequestException("Selected slot is not available");
@@ -281,7 +283,7 @@ export class PatientPortalService {
       }
       await ds
         .getRepository(DoctorSlot)
-        .increment({ id: dto.slotId }, "bookedCount", 1);
+        .increment({ id: dto.slotId, tenantId }, "bookedCount", 1);
     }
 
     const count = await apptRepo.count({ where: { tenantId } });
@@ -390,7 +392,7 @@ export class PatientPortalService {
   async getDoctors(tenantId: string) {
     const ds = await this.getDsById(tenantId);
     return ds.getRepository(DoctorProfile).find({
-      where: { isAcceptingPatients: true },
+      where: { tenantId, isAcceptingPatients: true },
       relations: ["user", "department"],
     });
   }
@@ -398,7 +400,7 @@ export class PatientPortalService {
   async getDepartments(tenantId: string) {
     const ds = await this.getDsById(tenantId);
     return ds.getRepository(Department).find({
-      where: { isActive: true },
+      where: { tenantId, isActive: true },
       order: { name: "ASC" },
     });
   }
@@ -406,7 +408,7 @@ export class PatientPortalService {
   async getAvailableSlots(tenantId: string, doctorId: string, date: string) {
     const ds = await this.getDsById(tenantId);
     return ds.getRepository(DoctorSlot).find({
-      where: { doctorId, slotDate: date, isBlocked: false },
+      where: { tenantId, doctorId, slotDate: date, isBlocked: false },
       order: { startTime: "ASC" },
     });
   }
@@ -418,7 +420,7 @@ export class PatientPortalService {
 
     // Confirm an account exists for this phone in the tenant
     const account = await ds.getRepository(PatientAccount).findOne({
-      where: { phone: dto.phone, isActive: true },
+      where: { tenantId: tenant.id, phone: dto.phone, isActive: true },
     });
     if (!account) {
       // Return generic success — don't reveal whether the phone is registered
@@ -553,7 +555,7 @@ export class PatientPortalService {
     await this.redis.del(otpKey);
 
     const account = await ds.getRepository(PatientAccount).findOne({
-      where: { phone: dto.phone, isActive: true },
+      where: { tenantId: tenant.id, phone: dto.phone, isActive: true },
       relations: ["patient"],
     });
     if (!account) throw new UnauthorizedException("Account not found");

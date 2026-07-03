@@ -1,32 +1,37 @@
-import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
-import { AsyncLocalStorage } from 'async_hooks';
-import { ConfigService } from '@nestjs/config';
-import { DataSource, DataSourceOptions } from 'typeorm';
-import { ALL_ENTITIES } from './entities';
+import { Injectable, Logger } from "@nestjs/common";
+import { InjectDataSource } from "@nestjs/typeorm";
+import { AsyncLocalStorage } from "async_hooks";
+import { DataSource } from "typeorm";
+
+interface TenantMarker {
+  tenantId: string;
+  slug: string;
+}
 
 /**
- * Manages one TypeORM DataSource per tenant (schema-per-tenant on a single Neon DB).
+ * All hospitals share one Postgres schema (`public`); rows are isolated by
+ * the `tenantId` column on every tenant-scoped entity (see TenantEntityManager
+ * for the auto-scoping safety net). This registry no longer builds a
+ * DataSource per tenant — it just tracks which tenant is "current" for the
+ * request via AsyncLocalStorage, and always hands back the one shared
+ * platform DataSource.
  *
- * Each tenant gets its own PostgreSQL schema: `tenant_{slug}`.
- * TypeORM's `schema` option sets the `search_path` for all queries automatically.
- *
- * Uses Node.js AsyncLocalStorage to propagate the current tenant's DataSource
- * through the entire request chain without any REQUEST-scoped injection.
+ * The public API (`getOrCreate`, `current`, `currentOrNull`, `runWithTenant`,
+ * `getAll`, `evict`) is unchanged so every existing call site keeps working.
  */
 @Injectable()
-export class TenantDataSourceRegistry implements OnApplicationShutdown {
+export class TenantDataSourceRegistry {
   private readonly logger = new Logger(TenantDataSourceRegistry.name);
-  private readonly cache = new Map<string, DataSource>();
 
-  /** ALS store: the active tenant DataSource for the current async context */
-  readonly als = new AsyncLocalStorage<DataSource>();
+  /** ALS store: which tenant is "current" for this async context */
+  readonly als = new AsyncLocalStorage<TenantMarker>();
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   // ── Public API ────────────────────────────────────────────────────────────
 
   /**
-   * Wraps the request handler chain in the tenant's DataSource ALS context.
+   * Wraps the request handler chain in the tenant marker's ALS context.
    * Called by TenantContextMiddleware for every incoming request.
    */
   async runWithTenant(
@@ -34,23 +39,21 @@ export class TenantDataSourceRegistry implements OnApplicationShutdown {
     slug: string,
     fn: () => void,
   ): Promise<void> {
-    const ds = await this.getOrCreate(tenantId, slug);
-    this.als.run(ds, fn);
+    this.als.run({ tenantId, slug }, fn);
   }
 
   /**
-   * Returns the DataSource for the current async context (i.e. current request).
-   * Throws if no tenant context has been established.
+   * Returns the shared DataSource. Throws if no tenant context has been
+   * established for the current async context.
    */
   get current(): DataSource {
-    const ds = this.als.getStore();
-    if (!ds) {
+    if (!this.als.getStore()) {
       throw new Error(
-        'TenantDataSourceRegistry: no tenant context. ' +
-        'Ensure TenantContextMiddleware is applied and the route carries a tenant slug.',
+        "TenantDataSourceRegistry: no tenant context. " +
+          "Ensure TenantContextMiddleware is applied and the route carries a tenant slug.",
       );
     }
-    return ds;
+    return this.dataSource;
   }
 
   /**
@@ -58,87 +61,41 @@ export class TenantDataSourceRegistry implements OnApplicationShutdown {
    * that may legitimately run without a tenant context.
    */
   get currentOrNull(): DataSource | null {
-    return this.als.getStore() ?? null;
+    return this.als.getStore() ? this.dataSource : null;
+  }
+
+  /** The tenantId of the current async context, if any. */
+  get currentTenantId(): string | null {
+    return this.als.getStore()?.tenantId ?? null;
   }
 
   /**
-   * Lazily creates (or returns from cache) a DataSource for the given tenant schema.
-   * Also used during tenant provisioning to pre-warm the connection.
+   * Returns the shared platform DataSource — kept for backward compatibility
+   * with existing call sites that resolve a tenant's DataSource explicitly.
    */
   async getOrCreate(tenantId: string, slug: string): Promise<DataSource> {
-    const cached = this.cache.get(tenantId);
-    if (cached?.isInitialized) return cached;
-
-    this.logger.log(`Initializing DataSource for tenant '${slug}' (schema: tenant_${slug})`);
-
-    const ds = new DataSource(this.buildOptions(slug));
-    await ds.initialize();
-
-    this.cache.set(tenantId, ds);
-    this.logger.log(`DataSource ready for tenant '${slug}'`);
-    return ds;
+    if (!this.dataSource.isInitialized) {
+      this.logger.warn(
+        `Platform DataSource not initialized when resolving tenant '${slug}'`,
+      );
+    }
+    return this.dataSource;
   }
 
   /**
-   * Returns all currently-initialized tenant DataSources.
-   * Used by cross-tenant services (e.g. WhatsApp webhook handler) that need to
-   * search across tenants without an incoming request context.
+   * Returns the shared DataSource as a single-element array — preserves the
+   * shape expected by existing cross-tenant loops (they now naturally query
+   * the one shared table instead of iterating per-tenant DataSources).
    */
   getAll(): DataSource[] {
-    return [...this.cache.values()].filter((ds) => ds.isInitialized);
+    return this.dataSource.isInitialized ? [this.dataSource] : [];
   }
 
   /**
-   * Destroys and removes a cached DataSource — call when a tenant is deactivated.
+   * No-op — there is no per-tenant DataSource to destroy anymore. Kept so
+   * existing callers (e.g. on tenant deactivate/delete) don't need changes.
    */
-  async evict(tenantId: string): Promise<void> {
-    const ds = this.cache.get(tenantId);
-    if (ds?.isInitialized) await ds.destroy().catch(() => {});
-    this.cache.delete(tenantId);
-  }
-
-  async onApplicationShutdown(): Promise<void> {
-    for (const [id, ds] of this.cache) {
-      if (ds.isInitialized) {
-        this.logger.log(`Closing DataSource for tenant ${id}`);
-        await ds.destroy().catch(() => {});
-      }
-    }
-    this.cache.clear();
-  }
-
-  // ── Private ───────────────────────────────────────────────────────────────
-
-  private buildOptions(slug: string): DataSourceOptions {
-    const url =
-      this.config.get<string>('DATABASE_URL') ?? process.env.DATABASE_URL;
-    if (!url) throw new Error('DATABASE_URL is not configured');
-
-    const isProd = process.env.NODE_ENV === 'production';
-
-    return {
-      type: 'postgres',
-      url,
-      // All entities live in this tenant's schema — TypeORM sets search_path automatically
-      schema: `tenant_${slug}`,
-      entities: ALL_ENTITIES,
-      // Always synchronize — tenant schemas are provisioned on-demand and must
-      // have their tables created regardless of NODE_ENV.  Each tenant gets its
-      // own isolated schema so there is no risk of cross-tenant data corruption
-      // from an accidental schema change.  (Use TypeORM migrations per-schema
-      // if you ever need to gate changes in production.)
-      synchronize: true,
-      ssl: isProd ? { rejectUnauthorized: false } : false,
-      logging: process.env.LOG_QUERIES === 'true' ? ['query', 'error'] : ['error'],
-      extra: {
-        // Keep per-tenant pools small (many tenants × pool size = DB connections)
-        max: 3,
-        min: 0,
-        idleTimeoutMillis: 30_000,
-        connectionTimeoutMillis: 60_000,
-        keepAlive: true,
-        keepAliveInitialDelayMillis: 10_000,
-      },
-    };
+  async evict(_tenantId: string): Promise<void> {
+    // intentionally empty
   }
 }

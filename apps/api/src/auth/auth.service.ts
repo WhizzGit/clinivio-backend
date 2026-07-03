@@ -2,12 +2,14 @@ import {
   Injectable,
   UnauthorizedException,
   NotFoundException,
+  BadRequestException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { DataSource } from "typeorm";
 import * as bcrypt from "bcrypt";
+import * as crypto from "crypto";
 import {
   User,
   Tenant,
@@ -15,6 +17,7 @@ import {
   TenantDataSourceRegistry,
 } from "@mediflow/database";
 import { JwtPayload } from "@mediflow/shared";
+import { EmailService } from "../email/email.service";
 
 @Injectable()
 export class AuthService {
@@ -25,6 +28,7 @@ export class AuthService {
     private readonly registry: TenantDataSourceRegistry,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -45,6 +49,7 @@ export class AuthService {
   ): Promise<any> {
     // ── Resolve DataSource ─────────────────────────────────────────────────
     let targetDs = this.registry.currentOrNull;
+    let resolvedTenantId = this.registry.currentTenantId ?? undefined;
 
     if (!targetDs && (tenantId || slug)) {
       const where = tenantId
@@ -57,18 +62,19 @@ export class AuthService {
 
       if (tenant?.slug) {
         targetDs = await this.registry.getOrCreate(tenant.id, tenant.slug);
+        resolvedTenantId = tenant.id;
       }
     }
 
     // ── Query the right schema ─────────────────────────────────────────────
     let user: User | null = null;
 
-    if (targetDs) {
+    if (targetDs && resolvedTenantId) {
       // ── Tenant user path — match staffId OR email ─────────────────────
       user = await targetDs.getRepository(User).findOne({
         where: [
-          { staffId: identifier, isActive: true },
-          { email: identifier, isActive: true },
+          { tenantId: resolvedTenantId, staffId: identifier, isActive: true },
+          { tenantId: resolvedTenantId, email: identifier, isActive: true },
         ],
         relations: ["doctorProfile"],
       });
@@ -196,5 +202,100 @@ export class AuthService {
     await repo.update(userId, { passwordHash });
 
     return { message: "Password changed successfully" };
+  }
+
+  /**
+   * Generates a password reset token and emails it to the user.
+   * Always returns the same success message to prevent email enumeration.
+   */
+  async forgotPassword(
+    email: string,
+    slug: string,
+  ): Promise<{ message: string }> {
+    const tenant = await this.platformDs
+      .getRepository(Tenant)
+      .findOne({ where: { slug, isActive: true } });
+
+    if (!tenant) {
+      // Return generic message even when tenant not found — no enumeration
+      return {
+        message: "If that email is registered, a reset link has been sent.",
+      };
+    }
+
+    const ds = await this.registry.getOrCreate(tenant.id, tenant.slug);
+    const userRepo = ds.getRepository(User);
+
+    const user = await userRepo.findOne({
+      where: { email, tenantId: tenant.id, isActive: true },
+    });
+
+    if (!user) {
+      return {
+        message: "If that email is registered, a reset link has been sent.",
+      };
+    }
+
+    const token = crypto.randomBytes(48).toString("hex");
+    const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await userRepo.update(user.id, {
+      passwordResetToken: token,
+      passwordResetExpiry: expiry,
+    });
+
+    const frontendUrl = this.configService.get<string>("frontendUrl");
+    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+    const { html, text } = this.emailService.buildPasswordResetEmail(
+      user.firstName,
+      resetUrl,
+    );
+
+    await this.emailService.sendMail({
+      to: user.email,
+      subject: "Reset your Clinivio password",
+      html,
+      text,
+    });
+
+    return {
+      message: "If that email is registered, a reset link has been sent.",
+    };
+  }
+
+  /**
+   * Validates the reset token and updates the password.
+   */
+  async resetPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    // Search across all users (shared schema) — token is globally unique
+    const user = await this.platformDs.getRepository(User).findOne({
+      where: { passwordResetToken: token },
+    });
+
+    if (!user || !user.passwordResetExpiry) {
+      throw new BadRequestException("Invalid or expired password reset link.");
+    }
+
+    if (new Date() > user.passwordResetExpiry) {
+      throw new BadRequestException(
+        "Password reset link has expired. Please request a new one.",
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    await this.platformDs.getRepository(User).update(user.id, {
+      passwordHash,
+      passwordResetToken: null,
+      passwordResetExpiry: null,
+    });
+
+    return {
+      message:
+        "Password reset successfully. You can now log in with your new password.",
+    };
   }
 }

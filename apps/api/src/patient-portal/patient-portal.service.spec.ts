@@ -9,7 +9,12 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
-import { PatientPortalService } from "./patient-portal.service";
+import {
+  PatientPortalService,
+  OTP_REDIS_CLIENT,
+} from "./patient-portal.service";
+import { RazorpayService } from "../payments/razorpay.service";
+import { InvoicesService } from "../invoices/invoices.service";
 import {
   TenantDataSourceRegistry,
   Patient,
@@ -95,6 +100,22 @@ const configServiceMock = {
   get: jest.fn().mockReturnValue("mock-secret"),
 };
 
+const razorpayServiceMock = {
+  createOrder: jest.fn(),
+  verifyPaymentSignature: jest.fn(),
+};
+
+const invoicesServiceMock = {
+  create: jest.fn(),
+  findOne: jest.fn(),
+};
+
+const redisMock = {
+  get: jest.fn(),
+  set: jest.fn(),
+  del: jest.fn(),
+};
+
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe("PatientPortalService", () => {
@@ -110,6 +131,9 @@ describe("PatientPortalService", () => {
         { provide: TenantDataSourceRegistry, useValue: registryMock },
         { provide: JwtService, useValue: jwtServiceMock },
         { provide: ConfigService, useValue: configServiceMock },
+        { provide: RazorpayService, useValue: razorpayServiceMock },
+        { provide: InvoicesService, useValue: invoicesServiceMock },
+        { provide: OTP_REDIS_CLIENT, useValue: redisMock },
       ],
     }).compile();
 
@@ -314,7 +338,7 @@ describe("PatientPortalService", () => {
       });
 
       expect(tenantDs._repos.DoctorSlot.increment).toHaveBeenCalledWith(
-        { id: "slot-1" },
+        { id: "slot-1", tenantId: TENANT_ID },
         "bookedCount",
         1,
       );
@@ -426,7 +450,9 @@ describe("PatientPortalService", () => {
       const result = await service.getDoctors("tenant-1");
 
       expect(tenantDs._repos.DoctorProfile.find).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { isAcceptingPatients: true } }),
+        expect.objectContaining({
+          where: { tenantId: "tenant-1", isAcceptingPatients: true },
+        }),
       );
       expect(result).toHaveLength(1);
     });
@@ -452,6 +478,7 @@ describe("PatientPortalService", () => {
       expect(tenantDs._repos.DoctorSlot.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
+            tenantId: "tenant-1",
             doctorId: "doc-1",
             slotDate: "2026-06-20",
             isBlocked: false,

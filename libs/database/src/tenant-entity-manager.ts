@@ -1,21 +1,92 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable } from "@nestjs/common";
 import {
   DataSource,
   EntityManager,
   EntityTarget,
   FindManyOptions,
   FindOneOptions,
+  FindOptionsWhere,
   ObjectLiteral,
   Repository,
   SelectQueryBuilder,
-} from 'typeorm';
-import { TenantDataSourceRegistry } from './tenant-datasource.registry';
+} from "typeorm";
+import { TenantDataSourceRegistry } from "./tenant-datasource.registry";
+import { ALL_ENTITIES, Tenant } from "./entities";
+
+/**
+ * Every entity except `Tenant` itself carries a `tenantId` column and is
+ * scoped per-hospital. `Tenant` is the organization table — it has no
+ * tenantId of its own.
+ */
+const TENANT_SCOPED_ENTITIES = new Set<unknown>(
+  ALL_ENTITIES.filter((entity) => entity !== Tenant),
+);
+
+function withTenantScope<T extends ObjectLiteral>(
+  where: FindOptionsWhere<T> | FindOptionsWhere<T>[] | undefined,
+  tenantId: string,
+): FindOptionsWhere<T> | FindOptionsWhere<T>[] {
+  if (Array.isArray(where)) {
+    return where.map((w) => ({ ...w, tenantId }) as FindOptionsWhere<T>);
+  }
+  return { ...(where ?? {}), tenantId } as unknown as FindOptionsWhere<T>;
+}
+
+/**
+ * Wraps a Repository so find/findOne/findOneBy/count/findAndCount always
+ * merge `tenantId` into the where clause — a safety net on top of the
+ * explicit tenantId filtering every service already performs. Does NOT
+ * touch createQueryBuilder()/update()/delete(): those remain the caller's
+ * responsibility (see TenantEntityManager.qb doc comment).
+ */
+function scopeRepository<T extends ObjectLiteral>(
+  repo: Repository<T>,
+  tenantId: string,
+): Repository<T> {
+  const overrides: Record<string, (...args: any[]) => any> = {
+    find: (options?: FindManyOptions<T>) =>
+      repo.find({
+        ...options,
+        where: withTenantScope(options?.where, tenantId),
+      }),
+    findOne: (options: FindOneOptions<T>) =>
+      repo.findOne({
+        ...options,
+        where: withTenantScope(options?.where as any, tenantId),
+      } as FindOneOptions<T>),
+    findOneBy: (where: FindOptionsWhere<T> | FindOptionsWhere<T>[]) =>
+      repo.findOneBy(withTenantScope(where, tenantId) as any),
+    count: (options?: FindManyOptions<T>) =>
+      repo.count({
+        ...options,
+        where: withTenantScope(options?.where, tenantId),
+      }),
+    findAndCount: (options?: FindManyOptions<T>) =>
+      repo.findAndCount({
+        ...options,
+        where: withTenantScope(options?.where, tenantId),
+      }),
+  };
+
+  return new Proxy(repo, {
+    get(target, prop, _receiver) {
+      if (typeof prop === "string" && prop in overrides) {
+        return overrides[prop];
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Repository<T>;
+}
 
 /**
  * Thin wrapper over the current request's tenant DataSource.
  *
  * Inject this ONCE in any service instead of multiple @InjectRepository() calls.
- * All operations automatically route to the correct tenant schema.
+ * Tenant-scoped entities are automatically filtered by the current tenantId
+ * on find/findOne/findOneBy/count/findAndCount as a safety net — services
+ * should still pass tenantId explicitly (existing convention), this just
+ * guards against an omission leaking cross-tenant rows.
  *
  * Usage:
  *   constructor(private db: TenantEntityManager) {}
@@ -47,9 +118,21 @@ export class TenantEntityManager {
   // ── Repository shortcuts ──────────────────────────────────────────────────
 
   repo<T extends ObjectLiteral>(entity: EntityTarget<T>): Repository<T> {
-    return this.registry.current.getRepository(entity);
+    const raw = this.registry.current.getRepository(entity);
+    const tenantId = this.registry.currentTenantId;
+    if (tenantId && TENANT_SCOPED_ENTITIES.has(entity)) {
+      return scopeRepository(raw, tenantId);
+    }
+    return raw;
   }
 
+  /**
+   * Raw query builder — NOT auto-scoped by tenantId. Callers must add their
+   * own `.andWhere('<alias>.tenantId = :tenantId', { tenantId })` (existing
+   * convention across the codebase) since safely composing a tenant filter
+   * onto an arbitrary caller-built query isn't possible (a later `.where()`
+   * call would clobber it).
+   */
   qb<T extends ObjectLiteral>(
     entity: EntityTarget<T>,
     alias: string,
@@ -82,7 +165,10 @@ export class TenantEntityManager {
     return this.repo(entity).count(options);
   }
 
-  save<T extends ObjectLiteral>(entity: EntityTarget<T>, data: T | T[]): Promise<T | T[]> {
+  save<T extends ObjectLiteral>(
+    entity: EntityTarget<T>,
+    data: T | T[],
+  ): Promise<T | T[]> {
     return this.repo(entity).save(data as any) as any;
   }
 

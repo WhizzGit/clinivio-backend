@@ -36,6 +36,7 @@ import { InvoicesModule } from "./invoices/invoices.module";
 import { PaymentsModule } from "./payments/payments.module";
 
 // Notifications & Messaging
+import { EmailModule } from "./email/email.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { RemindersModule } from "./notifications/reminders/reminder.module";
 import { WhatsappModule } from "./whatsapp/whatsapp.module";
@@ -132,6 +133,7 @@ import { AiModule } from "./ai/ai.module";
     PaymentsModule,
 
     // ── Notifications & Messaging ─────────────────────────────────────────────────
+    EmailModule,
     NotificationsModule,
     RemindersModule,
     WhatsappModule,

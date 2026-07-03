@@ -53,6 +53,21 @@ export class User {
   @Column({ name: "last_login_at", type: "timestamptz", nullable: true })
   lastLoginAt: Date | null;
 
+  @Column({
+    name: "password_reset_token",
+    nullable: true,
+    type: "varchar",
+    length: 128,
+  })
+  passwordResetToken: string | null;
+
+  @Column({
+    name: "password_reset_expiry",
+    type: "timestamptz",
+    nullable: true,
+  })
+  passwordResetExpiry: Date | null;
+
   @CreateDateColumn({ name: "created_at" })
   createdAt: Date;
 
