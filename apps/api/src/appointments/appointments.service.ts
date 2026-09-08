@@ -5,6 +5,8 @@ import {
   ConflictException,
   Optional,
 } from "@nestjs/common";
+import { InjectDataSource } from "@nestjs/typeorm";
+import { DataSource } from "typeorm";
 import { AppointmentsGateway } from "./appointments.gateway";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -12,6 +14,7 @@ import {
   DoctorSlot,
   PharmacyOrder,
   Invoice,
+  Tenant,
   AppointmentStatus,
   AppointmentType,
   PaymentStatus,
@@ -29,8 +32,19 @@ export class AppointmentsService {
   constructor(
     private readonly db: TenantEntityManager,
     private kafka: KafkaProducerService,
+    @InjectDataSource() private readonly platformDs: DataSource,
     @Optional() private readonly gateway: AppointmentsGateway | null = null,
   ) {}
+
+  private async tenantAllowsConsultBeforePayment(
+    tenantId: string,
+  ): Promise<boolean> {
+    const tenant = await this.platformDs.getRepository(Tenant).findOne({
+      where: { id: tenantId },
+      select: ["id", "allowConsultationBeforePayment"],
+    });
+    return tenant?.allowConsultationBeforePayment ?? false;
+  }
 
   private emit(
     tenantId: string,
@@ -131,12 +145,19 @@ export class AppointmentsService {
     }
 
     const now = new Date();
+    // Only advance REGISTERED → CONFIRMED here. If the patient was already
+    // seen before paying (allowConsultationBeforePayment tenants), the
+    // appointment has moved past REGISTERED already — don't regress its
+    // workflow status, just clear the payment.
+    const statusUpdate =
+      appointment.status === AppointmentStatus.REGISTERED
+        ? { status: AppointmentStatus.CONFIRMED, confirmedAt: now }
+        : {};
     await this.db.repo(Appointment).update(id, {
       paymentStatus: PaymentStatus.PAID,
       paymentAmount: String(amount),
       razorpayPaymentId: razorpayPaymentId ?? null,
-      status: AppointmentStatus.CONFIRMED,
-      confirmedAt: now,
+      ...statusUpdate,
     });
 
     // Create or update the consultation invoice so revenue stats are accurate
@@ -381,7 +402,15 @@ export class AppointmentsService {
       .repo(Appointment)
       .findOne({ where: { id, tenantId } });
     if (!appointment) throw new NotFoundException("Appointment not found");
-    if (appointment.status !== AppointmentStatus.CONFIRMED) {
+
+    const canCheckInUnpaid =
+      appointment.status === AppointmentStatus.REGISTERED &&
+      (await this.tenantAllowsConsultBeforePayment(tenantId));
+
+    if (
+      appointment.status !== AppointmentStatus.CONFIRMED &&
+      !canCheckInUnpaid
+    ) {
       throw new BadRequestException(
         "Appointment must be CONFIRMED to check in",
       );
@@ -413,16 +442,17 @@ export class AppointmentsService {
         "Only CHECKED_IN appointments can be reversed",
       );
     }
+    // Revert to wherever it came from: unpaid check-ins (allowed only for
+    // opted-in tenants) came straight from REGISTERED, not CONFIRMED.
+    const revertStatus =
+      appointment.paymentStatus === PaymentStatus.PAID
+        ? AppointmentStatus.CONFIRMED
+        : AppointmentStatus.REGISTERED;
     await this.db.repo(Appointment).update(id, {
-      status: AppointmentStatus.CONFIRMED,
+      status: revertStatus,
       checkedInAt: null as any,
     });
-    this.emit(
-      tenantId,
-      id,
-      AppointmentStatus.CONFIRMED,
-      appointment.tokenNumber,
-    );
+    this.emit(tenantId, id, revertStatus, appointment.tokenNumber);
     return this.db.repo(Appointment).findOne({
       where: { id },
       relations: ["patient", "doctor", "slot", "department"],
