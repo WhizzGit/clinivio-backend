@@ -1,4 +1,4 @@
-import { Module, Global } from "@nestjs/common";
+import { Module, Global, Logger } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ALL_ENTITIES } from "./entities";
@@ -23,9 +23,16 @@ import { TenantEntityManager } from "./tenant-entity-manager";
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
+        const logger = new Logger("DatabaseModule");
         const dbUrl =
           config.get<string>("DATABASE_URL") || process.env.DATABASE_URL;
         if (!dbUrl) throw new Error("DATABASE_URL is not set");
+
+        const dbTarget = describeDbTarget(dbUrl);
+        logger.log(
+          `Configuring Postgres connection host=${dbTarget.host} database=${dbTarget.database} ssl=${process.env.NODE_ENV === "production" ? "on" : "off"}`,
+        );
+
         return {
           type: "postgres",
           url: dbUrl,
@@ -67,3 +74,18 @@ import { TenantEntityManager } from "./tenant-entity-manager";
   exports: [TypeOrmModule, TenantDataSourceRegistry, TenantEntityManager],
 })
 export class DatabaseModule {}
+
+function describeDbTarget(dbUrl: string): { host: string; database: string } {
+  try {
+    const parsed = new URL(dbUrl);
+    return {
+      host: parsed.hostname || "<unknown>",
+      database: parsed.pathname.replace(/^\//, "") || "<unknown>",
+    };
+  } catch {
+    return {
+      host: "<invalid-url>",
+      database: "<invalid-url>",
+    };
+  }
+}
