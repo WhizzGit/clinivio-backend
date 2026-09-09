@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { Strategy } from "passport-local";
 import type { Request } from "express";
@@ -22,6 +22,8 @@ import { AuthService } from "./auth.service";
  */
 @Injectable()
 export class LocalStrategy extends PassportStrategy(Strategy) {
+  private readonly logger = new Logger(LocalStrategy.name);
+
   constructor(private authService: AuthService) {
     super({ usernameField: "identifier", passReqToCallback: true });
   }
@@ -37,6 +39,11 @@ export class LocalStrategy extends PassportStrategy(Strategy) {
       email?: string;
     };
     const resolvedIdentifier = identifier?.trim() || email?.trim();
+    if (!resolvedIdentifier) {
+      this.logger.warn(
+        `Login request missing identifier/email tenantId=${tenantId ?? "none"} slug=${slug ?? "none"}`,
+      );
+    }
     const user = await this.authService.validateUser(
       resolvedIdentifier ?? "",
       password,

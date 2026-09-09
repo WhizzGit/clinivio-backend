@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -21,33 +22,29 @@ import { EmailService } from "../email/email.service";
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
-    /** Platform (public schema) DataSource — used only for SUPER_ADMIN login */
+    /** Platform (public schema) DataSource - used only for SUPER_ADMIN login */
     @InjectDataSource() private readonly platformDs: DataSource,
-    /** Per-tenant ALS context — set by TenantContextMiddleware for subdomain requests */
+    /** Per-tenant ALS context - set by TenantContextMiddleware for subdomain requests */
     private readonly registry: TenantDataSourceRegistry,
     private jwtService: JwtService,
     private configService: ConfigService,
     private readonly emailService: EmailService,
   ) {}
 
-  /**
-   * Validates credentials for both tenant users and super admins.
-   *
-   * Resolution order for the DataSource to query:
-   *  1. Explicit tenantId / slug from the login body  ← new: single-URL login
-   *  2. ALS context set by TenantContextMiddleware (subdomain / X-Tenant-Slug header)
-   *  3. Platform (public) schema — SUPER_ADMIN only
-   *
-   * This lets all user types share one login URL regardless of subdomain.
-   */
   async validateUser(
     identifier: string,
     password: string,
     tenantId?: string,
     slug?: string,
   ): Promise<any> {
-    // ── Resolve DataSource ─────────────────────────────────────────────────
+    const maskedIdentifier = this.maskIdentifier(identifier);
+    this.logger.log(
+      `Login attempt identifier=${maskedIdentifier} tenantId=${tenantId ?? "none"} slug=${slug ?? "none"} hasAls=${this.registry.currentOrNull ? "yes" : "no"}`,
+    );
+
     let targetDs = this.registry.currentOrNull;
     let resolvedTenantId = this.registry.currentTenantId ?? undefined;
 
@@ -63,14 +60,19 @@ export class AuthService {
       if (tenant?.slug) {
         targetDs = await this.registry.getOrCreate(tenant.id, tenant.slug);
         resolvedTenantId = tenant.id;
+        this.logger.log(
+          `Resolved tenant for login slug=${tenant.slug} tenantId=${tenant.id}`,
+        );
+      } else {
+        this.logger.warn(
+          `Login tenant resolution failed identifier=${maskedIdentifier} tenantId=${tenantId ?? "none"} slug=${slug ?? "none"}`,
+        );
       }
     }
 
-    // ── Query the right schema ─────────────────────────────────────────────
     let user: User | null = null;
 
     if (targetDs && resolvedTenantId) {
-      // ── Tenant user path — match staffId OR email ─────────────────────
       user = await targetDs.getRepository(User).findOne({
         where: [
           { tenantId: resolvedTenantId, staffId: identifier, isActive: true },
@@ -78,29 +80,54 @@ export class AuthService {
         ],
         relations: ["doctorProfile"],
       });
+
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);
-        if (!isMatch) return null;
+        if (!isMatch) {
+          this.logger.warn(
+            `Login password mismatch identifier=${maskedIdentifier} tenantId=${resolvedTenantId} userId=${user.id}`,
+          );
+          return null;
+        }
+
         await targetDs
           .getRepository(User)
           .update(user.id, { lastLoginAt: new Date() });
+      } else {
+        this.logger.warn(
+          `Tenant login user not found identifier=${maskedIdentifier} tenantId=${resolvedTenantId}`,
+        );
       }
     } else {
-      // ── SUPER_ADMIN path (no tenant context) — email only ─────────────
       user = await this.platformDs.getRepository(User).findOne({
         where: { email: identifier, role: Role.SUPER_ADMIN, isActive: true },
         relations: ["doctorProfile"],
       });
+
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);
-        if (!isMatch) return null;
+        if (!isMatch) {
+          this.logger.warn(
+            `Super-admin login password mismatch identifier=${maskedIdentifier} userId=${user.id}`,
+          );
+          return null;
+        }
+
         await this.platformDs
           .getRepository(User)
           .update(user.id, { lastLoginAt: new Date() });
+      } else {
+        this.logger.warn(
+          `Super-admin login user not found identifier=${maskedIdentifier}`,
+        );
       }
     }
 
     if (!user) return null;
+
+    this.logger.log(
+      `Login success identifier=${maskedIdentifier} userId=${user.id} tenantId=${user.tenantId ?? "platform"} role=${user.role}`,
+    );
 
     const { passwordHash, ...result } = user;
     return result;
@@ -155,22 +182,12 @@ export class AuthService {
     return { message: "Logged out successfully" };
   }
 
-  /**
-   * Change the calling user's own password.
-   *
-   * Works for every role — SUPER_ADMIN (public schema) and all tenant users.
-   * Verifies the current password before applying the change.
-   */
   async changePassword(
     userId: string,
     tenantId: string,
     currentPassword: string,
     newPassword: string,
   ): Promise<{ message: string }> {
-    // ── Resolve the right DataSource ──────────────────────────────────────
-    // Prefer ALS context (subdomain requests). If absent, use tenantId from
-    // the JWT to bootstrap the correct DataSource — handles Render/Vercel
-    // direct-URL logins where no subdomain sets the ALS context.
     let targetDs = this.registry.currentOrNull;
 
     if (!targetDs) {
@@ -179,35 +196,28 @@ export class AuthService {
         .findOne({ where: { id: tenantId } });
 
       if (tenant?.slug) {
-        // Tenant user — bootstrap their schema DataSource
         targetDs = await this.registry.getOrCreate(tenant.id, tenant.slug);
       }
-      // If no slug → platform tenant → targetDs stays null → use platformDs below
     }
 
     const repo = targetDs
       ? targetDs.getRepository(User)
       : this.platformDs.getRepository(User);
 
-    // ── Verify current password ──────────────────────────────────────────
     const user = await repo.findOne({ where: { id: userId, isActive: true } });
     if (!user) throw new NotFoundException("User not found");
 
     const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!isMatch)
+    if (!isMatch) {
       throw new UnauthorizedException("Current password is incorrect");
+    }
 
-    // ── Apply new password ────────────────────────────────────────────────
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await repo.update(userId, { passwordHash });
 
     return { message: "Password changed successfully" };
   }
 
-  /**
-   * Generates a password reset token and emails it to the user.
-   * Always returns the same success message to prevent email enumeration.
-   */
   async forgotPassword(
     email: string,
     slug: string,
@@ -217,7 +227,6 @@ export class AuthService {
       .findOne({ where: { slug, isActive: true } });
 
     if (!tenant) {
-      // Return generic message even when tenant not found — no enumeration
       return {
         message: "If that email is registered, a reset link has been sent.",
       };
@@ -237,7 +246,7 @@ export class AuthService {
     }
 
     const token = crypto.randomBytes(48).toString("hex");
-    const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    const expiry = new Date(Date.now() + 60 * 60 * 1000);
 
     await userRepo.update(user.id, {
       passwordResetToken: token,
@@ -263,14 +272,10 @@ export class AuthService {
     };
   }
 
-  /**
-   * Validates the reset token and updates the password.
-   */
   async resetPassword(
     token: string,
     newPassword: string,
   ): Promise<{ message: string }> {
-    // Search across all users (shared schema) — token is globally unique
     const user = await this.platformDs.getRepository(User).findOne({
       where: { passwordResetToken: token },
     });
@@ -297,5 +302,20 @@ export class AuthService {
       message:
         "Password reset successfully. You can now log in with your new password.",
     };
+  }
+
+  private maskIdentifier(identifier: string): string {
+    const value = identifier?.trim();
+    if (!value) return "<empty>";
+
+    if (value.includes("@")) {
+      const [name, domain] = value.split("@");
+      const maskedName =
+        name.length <= 2 ? `${name[0] ?? "*"}*` : `${name.slice(0, 2)}***`;
+      return `${maskedName}@${domain}`;
+    }
+
+    if (value.length <= 3) return `${value[0] ?? "*"}**`;
+    return `${value.slice(0, 3)}***`;
   }
 }
