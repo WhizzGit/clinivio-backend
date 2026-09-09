@@ -14,6 +14,7 @@ export * from "./prescription.entity";
 export * from "./follow-up.entity";
 export * from "./pharmacy.entity";
 export * from "./invoice.entity";
+export * from "./invoice-payment.entity";
 export * from "./notification-log.entity";
 export * from "./ipd.entity";
 export * from "./lab.entity";
@@ -40,6 +41,7 @@ import {
   PharmacyPurchaseItem,
 } from "./pharmacy.entity";
 import { Invoice } from "./invoice.entity";
+import { InvoicePayment } from "./invoice-payment.entity";
 import { NotificationLog } from "./notification-log.entity";
 import {
   Room,
@@ -80,6 +82,7 @@ export const ALL_ENTITIES = [
   PharmacyPurchase,
   PharmacyPurchaseItem,
   Invoice,
+  InvoicePayment,
   NotificationLog,
   Room,
   Bed,
