@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ALL_ENTITIES } from "./entities";
 import { TenantDataSourceRegistry } from "./tenant-datasource.registry";
 import { TenantEntityManager } from "./tenant-entity-manager";
+import { DatabaseDiagnosticsService } from "./database-diagnostics.service";
 
 /**
  * Global DatabaseModule — import once in AppModule.
@@ -70,7 +71,11 @@ import { TenantEntityManager } from "./tenant-entity-manager";
       },
     }),
   ],
-  providers: [TenantDataSourceRegistry, TenantEntityManager],
+  providers: [
+    TenantDataSourceRegistry,
+    TenantEntityManager,
+    DatabaseDiagnosticsService,
+  ],
   exports: [TypeOrmModule, TenantDataSourceRegistry, TenantEntityManager],
 })
 export class DatabaseModule {}
