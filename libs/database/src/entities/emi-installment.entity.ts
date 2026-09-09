@@ -1,7 +1,8 @@
 import {
   Entity,
   Column,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  Generated,
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
@@ -22,7 +23,8 @@ import { EmiInstallmentStatus } from "./enums";
  */
 @Entity("emi_installments")
 export class EmiInstallment {
-  @PrimaryGeneratedColumn("uuid")
+  @PrimaryColumn({ type: "text" })
+  @Generated("uuid")
   id: string;
 
   @Column({ name: "tenant_id" })

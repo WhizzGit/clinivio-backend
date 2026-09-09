@@ -34,12 +34,17 @@ export class AddEmiTables1725900000000 implements MigrationInterface {
       $$;
     `);
 
+    // id/tenant_id/invoice_id/patient_id are declared as `text` (not `uuid`) to match
+    // the rest of this schema — the app's core tables (users, patients, invoices, ...)
+    // were converted from uuid to text at some point without their entity decorators
+    // being updated to match, so every table's FK/PK columns must be `text` or a
+    // FOREIGN KEY / JOIN against them fails with "operator does not exist: uuid = text".
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "emi_plans" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
-        "tenant_id" uuid NOT NULL,
-        "invoice_id" uuid NOT NULL,
-        "patient_id" uuid NOT NULL,
+        "id" text NOT NULL DEFAULT uuid_generate_v4(),
+        "tenant_id" text NOT NULL,
+        "invoice_id" text NOT NULL,
+        "patient_id" text NOT NULL,
         "total_amount" numeric(10,2) NOT NULL,
         "advance_amount" numeric(10,2) NOT NULL,
         "number_of_installments" integer NOT NULL,
@@ -48,7 +53,7 @@ export class AddEmiTables1725900000000 implements MigrationInterface {
         "start_date" date NOT NULL,
         "status" "public"."emi_plans_status_enum" NOT NULL DEFAULT 'ACTIVE',
         "notes" text,
-        "created_by_user_id" uuid,
+        "created_by_user_id" text,
         "created_at" TIMESTAMP NOT NULL DEFAULT now(),
         "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
         CONSTRAINT "PK_emi_plans_id" PRIMARY KEY ("id")
@@ -57,9 +62,9 @@ export class AddEmiTables1725900000000 implements MigrationInterface {
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "emi_installments" (
-        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
-        "tenant_id" uuid NOT NULL,
-        "emi_plan_id" uuid NOT NULL,
+        "id" text NOT NULL DEFAULT uuid_generate_v4(),
+        "tenant_id" text NOT NULL,
+        "emi_plan_id" text NOT NULL,
         "installment_number" integer NOT NULL,
         "due_date" date NOT NULL,
         "amount_due" numeric(10,2) NOT NULL,
@@ -68,7 +73,7 @@ export class AddEmiTables1725900000000 implements MigrationInterface {
         "payment_method" character varying,
         "paid_at" TIMESTAMP WITH TIME ZONE,
         "receipt_number" character varying,
-        "collected_by_user_id" uuid,
+        "collected_by_user_id" text,
         "created_at" TIMESTAMP NOT NULL DEFAULT now(),
         "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
         CONSTRAINT "PK_emi_installments_id" PRIMARY KEY ("id")
