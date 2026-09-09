@@ -40,7 +40,8 @@ export class AuthService {
     tenantId?: string,
     slug?: string,
   ): Promise<any> {
-    const maskedIdentifier = this.maskIdentifier(identifier);
+    const normalizedIdentifier = identifier.trim();
+    const maskedIdentifier = this.maskIdentifier(normalizedIdentifier);
     this.logger.log(
       `Login attempt identifier=${maskedIdentifier} tenantId=${tenantId ?? "none"} slug=${slug ?? "none"} hasAls=${this.registry.currentOrNull ? "yes" : "no"}`,
     );
@@ -73,13 +74,17 @@ export class AuthService {
     let user: User | null = null;
 
     if (targetDs && resolvedTenantId) {
-      user = await targetDs.getRepository(User).findOne({
-        where: [
-          { tenantId: resolvedTenantId, staffId: identifier, isActive: true },
-          { tenantId: resolvedTenantId, email: identifier, isActive: true },
-        ],
-        relations: ["doctorProfile"],
-      });
+      user = await targetDs
+        .getRepository(User)
+        .createQueryBuilder("user")
+        .leftJoinAndSelect("user.doctorProfile", "doctorProfile")
+        .where("user.tenantId = :tenantId", { tenantId: resolvedTenantId })
+        .andWhere("user.isActive = :isActive", { isActive: true })
+        .andWhere(
+          "(LOWER(COALESCE(user.staffId, '')) = LOWER(:identifier) OR LOWER(user.email) = LOWER(:identifier))",
+          { identifier: normalizedIdentifier },
+        )
+        .getOne();
 
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);
@@ -99,10 +104,16 @@ export class AuthService {
         );
       }
     } else {
-      user = await this.platformDs.getRepository(User).findOne({
-        where: { email: identifier, role: Role.SUPER_ADMIN, isActive: true },
-        relations: ["doctorProfile"],
-      });
+      user = await this.platformDs
+        .getRepository(User)
+        .createQueryBuilder("user")
+        .leftJoinAndSelect("user.doctorProfile", "doctorProfile")
+        .where("LOWER(user.email) = LOWER(:identifier)", {
+          identifier: normalizedIdentifier,
+        })
+        .andWhere("user.role = :role", { role: Role.SUPER_ADMIN })
+        .andWhere("user.isActive = :isActive", { isActive: true })
+        .getOne();
 
       if (user) {
         const isMatch = await bcrypt.compare(password, user.passwordHash);

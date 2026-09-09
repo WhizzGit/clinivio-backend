@@ -8,23 +8,33 @@ import { AuthService } from "./auth.service";
 import { EmailService } from "../email/email.service";
 import { TenantDataSourceRegistry, User, Tenant } from "@mediflow/database";
 
-// ── Repository mocks ──────────────────────────────────────────────────────────
-
 const userRepoMock = {
   findOne: jest.fn(),
   update: jest.fn(),
+  createQueryBuilder: jest.fn(),
 };
 
 const tenantRepoMock = {
   findOne: jest.fn(),
 };
 
+function createQueryBuilderMock(result: any) {
+  return {
+    leftJoinAndSelect: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getOne: jest.fn().mockResolvedValue(result),
+  };
+}
+
 const platformDsMock = {
   getRepository: jest.fn().mockImplementation((EntityClass: any) => {
-    if (EntityClass === User || EntityClass?.name === "User")
+    if (EntityClass === User || EntityClass?.name === "User") {
       return userRepoMock;
-    if (EntityClass === Tenant || EntityClass?.name === "Tenant")
+    }
+    if (EntityClass === Tenant || EntityClass?.name === "Tenant") {
       return tenantRepoMock;
+    }
     return { findOne: jest.fn(), update: jest.fn() };
   }),
 };
@@ -50,8 +60,6 @@ const emailServiceMock = {
     .mockReturnValue({ html: "<p>reset</p>", text: "reset" }),
 };
 
-// ── Test suite ────────────────────────────────────────────────────────────────
-
 describe("AuthService", () => {
   let service: AuthService;
 
@@ -73,36 +81,44 @@ describe("AuthService", () => {
     service = module.get<AuthService>(AuthService);
   });
 
-  // ── validateUser ─────────────────────────────────────────────────────────────
-
-  describe("validateUser — SUPER_ADMIN path (no tenant context)", () => {
+  describe("validateUser - SUPER_ADMIN path", () => {
     it("returns null when user does not exist", async () => {
-      userRepoMock.findOne.mockResolvedValueOnce(null);
+      userRepoMock.createQueryBuilder.mockReturnValue(
+        createQueryBuilderMock(null),
+      );
+
       const result = await service.validateUser("nobody@test.com", "pass");
+
       expect(result).toBeNull();
     });
 
     it("returns null when password is wrong", async () => {
       const hash = await bcrypt.hash("correct", 10);
-      userRepoMock.findOne.mockResolvedValueOnce({
-        id: "u1",
-        email: "admin@test.com",
-        passwordHash: hash,
-        role: "SUPER_ADMIN",
-      });
+      userRepoMock.createQueryBuilder.mockReturnValue(
+        createQueryBuilderMock({
+          id: "u1",
+          email: "admin@test.com",
+          passwordHash: hash,
+          role: "SUPER_ADMIN",
+        }),
+      );
+
       const result = await service.validateUser("admin@test.com", "wrong");
+
       expect(result).toBeNull();
     });
 
     it("returns user without passwordHash on valid credentials", async () => {
       const hash = await bcrypt.hash("secret", 10);
-      userRepoMock.findOne.mockResolvedValueOnce({
-        id: "u1",
-        email: "admin@test.com",
-        passwordHash: hash,
-        role: "SUPER_ADMIN",
-        firstName: "Admin",
-      });
+      userRepoMock.createQueryBuilder.mockReturnValue(
+        createQueryBuilderMock({
+          id: "u1",
+          email: "admin@test.com",
+          passwordHash: hash,
+          role: "SUPER_ADMIN",
+          firstName: "Admin",
+        }),
+      );
       userRepoMock.update.mockResolvedValueOnce({});
 
       const result = await service.validateUser("admin@test.com", "secret");
@@ -113,9 +129,12 @@ describe("AuthService", () => {
     });
   });
 
-  describe("validateUser — tenant path (tenantId in body)", () => {
-    it("bootstraps tenant DataSource and validates against tenant schema", async () => {
-      const tenantUserRepoMock = { findOne: jest.fn(), update: jest.fn() };
+  describe("validateUser - tenant path", () => {
+    it("bootstraps tenant DataSource and validates against tenant users", async () => {
+      const tenantUserRepoMock = {
+        createQueryBuilder: jest.fn(),
+        update: jest.fn(),
+      };
       const tenantDsMock = {
         getRepository: jest.fn().mockReturnValue(tenantUserRepoMock),
       };
@@ -128,12 +147,14 @@ describe("AuthService", () => {
       registryMock.getOrCreate.mockResolvedValueOnce(tenantDsMock);
 
       const hash = await bcrypt.hash("pw", 10);
-      tenantUserRepoMock.findOne.mockResolvedValueOnce({
-        id: "u2",
-        email: "staff@acme.com",
-        passwordHash: hash,
-        tenantId: "tenant-1",
-      });
+      tenantUserRepoMock.createQueryBuilder.mockReturnValue(
+        createQueryBuilderMock({
+          id: "u2",
+          email: "staff@acme.com",
+          passwordHash: hash,
+          tenantId: "tenant-1",
+        }),
+      );
       tenantUserRepoMock.update.mockResolvedValueOnce({});
 
       const result = await service.validateUser(
@@ -147,18 +168,85 @@ describe("AuthService", () => {
       expect(result.email).toBe("staff@acme.com");
     });
 
+    it("matches tenant staffId case-insensitively", async () => {
+      const tenantUserRepoMock = {
+        createQueryBuilder: jest.fn(),
+        update: jest.fn(),
+      };
+      const tenantDsMock = {
+        getRepository: jest.fn().mockReturnValue(tenantUserRepoMock),
+      };
+
+      tenantRepoMock.findOne.mockResolvedValueOnce({
+        id: "tenant-1",
+        slug: "acme",
+        isActive: true,
+      });
+      registryMock.getOrCreate.mockResolvedValueOnce(tenantDsMock);
+
+      const hash = await bcrypt.hash("pw", 10);
+      const qbMock = createQueryBuilderMock({
+        id: "u2",
+        email: "staff@acme.com",
+        staffId: "RCP0001",
+        passwordHash: hash,
+        tenantId: "tenant-1",
+      });
+      tenantUserRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+      tenantUserRepoMock.update.mockResolvedValueOnce({});
+
+      const result = await service.validateUser("rcp0001", "pw", "tenant-1");
+
+      expect(tenantUserRepoMock.createQueryBuilder).toHaveBeenCalledWith(
+        "user",
+      );
+      expect(qbMock.andWhere).toHaveBeenCalledWith(
+        "(LOWER(COALESCE(user.staffId, '')) = LOWER(:identifier) OR LOWER(user.email) = LOWER(:identifier))",
+        { identifier: "rcp0001" },
+      );
+      expect(result).not.toBeNull();
+      expect(result.staffId).toBe("RCP0001");
+    });
+
     it("returns null when tenant is not found", async () => {
       tenantRepoMock.findOne.mockResolvedValueOnce(null);
+
       const result = await service.validateUser(
         "staff@acme.com",
         "pw",
         "missing-tenant",
       );
+
+      expect(result).toBeNull();
+    });
+
+    it("returns null when tenant user is not found", async () => {
+      const tenantUserRepoMock = {
+        createQueryBuilder: jest
+          .fn()
+          .mockReturnValue(createQueryBuilderMock(null)),
+        update: jest.fn(),
+      };
+      const tenantDsMock = {
+        getRepository: jest.fn().mockReturnValue(tenantUserRepoMock),
+      };
+
+      tenantRepoMock.findOne.mockResolvedValueOnce({
+        id: "tenant-1",
+        slug: "acme",
+        isActive: true,
+      });
+      registryMock.getOrCreate.mockResolvedValueOnce(tenantDsMock);
+
+      const result = await service.validateUser(
+        "missing@acme.com",
+        "pw",
+        "tenant-1",
+      );
+
       expect(result).toBeNull();
     });
   });
-
-  // ── login ────────────────────────────────────────────────────────────────────
 
   describe("login", () => {
     it("returns accessToken, refreshToken, and sanitised user shape", async () => {
@@ -199,13 +287,12 @@ describe("AuthService", () => {
     });
   });
 
-  // ── refreshToken ──────────────────────────────────────────────────────────────
-
   describe("refreshToken", () => {
     it("throws UnauthorizedException on invalid or expired token", async () => {
       jwtServiceMock.verify.mockImplementationOnce(() => {
         throw new Error("jwt expired");
       });
+
       await expect(service.refreshToken("expired-token")).rejects.toThrow(
         UnauthorizedException,
       );
@@ -223,8 +310,6 @@ describe("AuthService", () => {
       expect(result.accessToken).toBe("mock-access-token");
     });
   });
-
-  // ── logout ────────────────────────────────────────────────────────────────────
 
   describe("logout", () => {
     it("returns success message", async () => {
