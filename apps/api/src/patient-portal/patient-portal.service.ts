@@ -12,7 +12,6 @@ import {
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { InjectDataSource } from "@nestjs/typeorm";
-import { DataSource } from "typeorm";
 import * as bcrypt from "bcrypt";
 import type { Redis } from "ioredis";
 
@@ -37,6 +36,7 @@ import {
   PaymentStatus,
   VisitType,
   TenantDataSourceRegistry,
+  DataSource,
 } from "@mediflow/database";
 import {
   PatientRegisterDto,
