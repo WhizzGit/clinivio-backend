@@ -16,6 +16,8 @@ export * from "./pharmacy.entity";
 export * from "./invoice.entity";
 export * from "./invoice-payment.entity";
 export * from "./billable-service.entity";
+export * from "./emi-plan.entity";
+export * from "./emi-installment.entity";
 export * from "./notification-log.entity";
 export * from "./ipd.entity";
 export * from "./lab.entity";
@@ -44,6 +46,8 @@ import {
 import { Invoice } from "./invoice.entity";
 import { InvoicePayment } from "./invoice-payment.entity";
 import { BillableService } from "./billable-service.entity";
+import { EmiPlan } from "./emi-plan.entity";
+import { EmiInstallment } from "./emi-installment.entity";
 import { NotificationLog } from "./notification-log.entity";
 import {
   Room,
@@ -86,6 +90,8 @@ export const ALL_ENTITIES = [
   Invoice,
   InvoicePayment,
   BillableService,
+  EmiPlan,
+  EmiInstallment,
   NotificationLog,
   Room,
   Bed,

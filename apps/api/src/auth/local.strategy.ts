@@ -28,12 +28,17 @@ export class LocalStrategy extends PassportStrategy(Strategy) {
 
   async validate(
     req: Request,
-    identifier: string,
+    identifier: string | undefined,
     password: string,
   ): Promise<any> {
-    const { tenantId, slug } = req.body as { tenantId?: string; slug?: string };
+    const { tenantId, slug, email } = req.body as {
+      tenantId?: string;
+      slug?: string;
+      email?: string;
+    };
+    const resolvedIdentifier = identifier?.trim() || email?.trim();
     const user = await this.authService.validateUser(
-      identifier,
+      resolvedIdentifier ?? "",
       password,
       tenantId,
       slug,
