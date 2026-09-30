@@ -13,6 +13,12 @@ import { Gender, Language } from '@mediflow/database';
 export class UpdatePatientDto {
   @ApiPropertyOptional() @IsOptional() @IsString() firstName?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() lastName?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+?[1-9]\d{7,14}$/)
+  phone?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() abhaId?: string;
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() dob?: string;
   @ApiPropertyOptional({ enum: Gender })

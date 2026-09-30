@@ -267,6 +267,8 @@ export class PatientsService {
     await this.db.repo(Patient).update(id, {
       firstName: dto.firstName,
       lastName: dto.lastName,
+      phone: dto.phone,
+      abhaId: dto.abhaId,
       email: dto.email,
       dob: dto.dob ?? undefined,
       gender: dto.gender as any,
