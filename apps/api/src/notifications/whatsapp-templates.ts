@@ -69,6 +69,28 @@ export const WHATSAPP_TEMPLATES: Record<string, WhatsappTemplateConfig> = {
     },
   },
 
+  // No distinct approved template exists for "appointment confirmed" — the
+  // client's own template doc reuses appointment_reminder_2's exact name and
+  // params for this and 7 other use cases (cancelled, rescheduled, payment
+  // confirmation, etc.), meaning there's really only one shared template
+  // underneath. Wiring this one deliberately, on the client's explicit
+  // instruction, aware that the delivered text will read as a generic
+  // "reminder" rather than a "your booking is confirmed" message — swap the
+  // templateName here the moment a real, distinct template is approved.
+  APPOINTMENT_CONFIRMED: {
+    templateName: 'appointment_reminder_2',
+    languageCode: 'en',
+    buildComponents: (p) => {
+      const d = p.data ?? p;
+      return [
+        {
+          type: 'body',
+          parameters: [text(d.patientName), text(d.doctorName), text(d.appointmentDate), text(d.appointmentTime)],
+        },
+      ];
+    },
+  },
+
   // No PDF report-generation exists yet (see clinivio-backend's lab module —
   // no PDFKit/puppeteer anywhere), so this degrades gracefully: sends the
   // template without the header document component rather than failing,
@@ -95,7 +117,7 @@ export const WHATSAPP_TEMPLATES: Record<string, WhatsappTemplateConfig> = {
 
   // ── Not wired yet — no distinct approved template confirmed for these.
   // Add an entry here (and a trigger call-site) once the client confirms
-  // real template names for: APPOINTMENT_CONFIRMED, APPOINTMENT_CANCELLED,
+  // real template names for: APPOINTMENT_CANCELLED,
   // APPOINTMENT_DELAY, APPOINTMENT_RESCHEDULED, MEDICINE_REMINDER,
   // PRESCRIPTION_AVAILABLE, LAB_TEST_BOOKING_CONFIRMATION,
   // PAYMENT_CONFIRMATION. QUEUE_ALERT also has no approved template at all

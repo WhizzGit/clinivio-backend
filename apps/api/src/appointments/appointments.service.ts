@@ -24,10 +24,12 @@ import {
   PharmacyOrderStatus,
   TenantEntityManager,
   ILike,
+  NotificationChannel,
 } from '@mediflow/database';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
 import { KAFKA_TOPICS } from '@mediflow/shared';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 // Resolves a cashier-entered discount (percentage or flat) against a known
 // subtotal, clamped to [0, subtotal]. Mirrors invoices.service.ts's
@@ -53,6 +55,7 @@ export class AppointmentsService {
     private readonly db: TenantEntityManager,
     private kafka: KafkaProducerService,
     @InjectDataSource() private readonly platformDs: DataSource,
+    private readonly notificationsService: NotificationsService,
     @Optional() private readonly gateway: AppointmentsGateway | null = null,
   ) {}
 
@@ -76,7 +79,7 @@ export class AppointmentsService {
   }
 
   async create(tenantId: string, dto: CreateAppointmentDto) {
-    return this.db.transaction(async (em) => {
+    const created = await this.db.transaction(async (em) => {
       const apptRepo = em.getRepository(Appointment);
       const slotRepo = em.getRepository(DoctorSlot);
 
@@ -145,6 +148,44 @@ export class AppointmentsService {
         relations: ['patient', 'doctor', 'slot', 'department'],
       });
     });
+
+    // Outside the transaction, same reasoning as patients.service.ts: a
+    // notification is a side effect of booking, not part of what makes the
+    // booking itself succeed or fail. NotificationsService.create() already
+    // catches its own queueing failures internally.
+    if (created?.patient?.hasWhatsapp && created.patient.whatsappPhone) {
+      const doctorName = created.doctor
+        ? `Dr. ${created.doctor.firstName} ${created.doctor.lastName ?? ''}`.trim()
+        : 'your doctor';
+      await this.notificationsService.create(tenantId, {
+        patientId: created.patient.id,
+        phone: created.patient.whatsappPhone,
+        channel: NotificationChannel.WHATSAPP,
+        notificationType: 'APPOINTMENT_CONFIRMED',
+        payload: {
+          to: created.patient.whatsappPhone,
+          data: {
+            patientName: `${created.patient.firstName} ${created.patient.lastName ?? ''}`.trim(),
+            doctorName,
+            appointmentDate: created.scheduledAt
+              ? created.scheduledAt.toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'long',
+                  year: 'numeric',
+                })
+              : 'TBD',
+            appointmentTime: created.scheduledAt
+              ? created.scheduledAt.toLocaleTimeString('en-IN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : 'TBD',
+          },
+        },
+      });
+    }
+
+    return created;
   }
 
   async confirmPayment(

@@ -6,10 +6,12 @@ import { AppointmentsController } from './appointments.controller';
 import { AppointmentsGateway } from './appointments.gateway';
 import { RazorpayService } from '../payments/razorpay.service';
 import { ConsultationModule } from '../consultation/consultation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     ConsultationModule,
+    NotificationsModule,
     // The gateway verifies the patient JWT on WebSocket connect — it was
     // previously not authenticating connections at all.
     JwtModule.registerAsync({
