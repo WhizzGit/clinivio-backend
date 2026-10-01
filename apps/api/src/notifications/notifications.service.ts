@@ -8,6 +8,24 @@ import {
   TenantEntityManager,
 } from '@mediflow/database';
 
+// ioredis's default retry/offline-queue behavior means a command issued
+// while Redis is unreachable just sits in memory indefinitely instead of
+// rejecting — so queue.add() can hang well past the frontend's 30s request
+// timeout. The caller (patient enrollment, appointment booking, ...) then
+// shows "failed" even though the primary record was already committed
+// moments earlier. Race against a short timeout so this always resolves
+// fast and falls into the same markFailed() path as a real enqueue error.
+const ENQUEUE_TIMEOUT_MS = 5_000;
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 export class CreateNotificationDto {
   patientId: string;
   phone: string;
@@ -70,25 +88,29 @@ export class NotificationsService {
     // notification) report "failed" even though the actual record had
     // already been committed moments earlier.
     try {
-      await this.notificationsQueue.add(
-        jobName,
-        {
-          notificationLogId: log.id,
-          tenantId,
-          patientId: dto.patientId,
-          phone: dto.phone,
-          email: dto.email,
-          notificationType: dto.notificationType,
-          payload: dto.payload,
-          // EMAIL jobs: pass subject/html from payload if provided
-          ...(dto.channel === NotificationChannel.EMAIL && {
-            to: dto.email,
-            subject: dto.payload['subject'] ?? 'Notification from Megnim',
-            html: dto.payload['html'] ?? '',
-            text: dto.payload['text'],
-          }),
-        },
-        jobOptions,
+      await withTimeout(
+        this.notificationsQueue.add(
+          jobName,
+          {
+            notificationLogId: log.id,
+            tenantId,
+            patientId: dto.patientId,
+            phone: dto.phone,
+            email: dto.email,
+            notificationType: dto.notificationType,
+            payload: dto.payload,
+            // EMAIL jobs: pass subject/html from payload if provided
+            ...(dto.channel === NotificationChannel.EMAIL && {
+              to: dto.email,
+              subject: dto.payload['subject'] ?? 'Notification from Megnim',
+              html: dto.payload['html'] ?? '',
+              text: dto.payload['text'],
+            }),
+          },
+          jobOptions,
+        ),
+        ENQUEUE_TIMEOUT_MS,
+        `Enqueue ${jobName}`,
       );
       this.logger.log(`Enqueued ${jobName} job for notification ${log.id}`);
     } catch (err: any) {
@@ -169,29 +191,39 @@ export class NotificationsService {
           ? 'send-email'
           : 'send-sms';
 
-    await this.notificationsQueue.add(
-      jobName,
-      {
-        notificationLogId: log.id,
-        tenantId,
-        patientId: dto.patientId,
-        phone: dto.phone,
-        email: dto.email,
-        notificationType: dto.notificationType,
-        payload: dto.payload,
-        ...(dto.channel === NotificationChannel.EMAIL && {
-          to: dto.email,
-          subject: dto.payload['subject'] ?? 'Notification from Megnim',
-          html: dto.payload['html'] ?? '',
-          text: dto.payload['text'],
-        }),
-      },
-      { delay: delayMs > 0 ? delayMs : 0, jobId: `delayed-${log.id}` },
-    );
-
-    this.logger.log(
-      `Enqueued ${jobName} with delay ${delayMs}ms for notification ${log.id}`,
-    );
+    try {
+      await withTimeout(
+        this.notificationsQueue.add(
+          jobName,
+          {
+            notificationLogId: log.id,
+            tenantId,
+            patientId: dto.patientId,
+            phone: dto.phone,
+            email: dto.email,
+            notificationType: dto.notificationType,
+            payload: dto.payload,
+            ...(dto.channel === NotificationChannel.EMAIL && {
+              to: dto.email,
+              subject: dto.payload['subject'] ?? 'Notification from Megnim',
+              html: dto.payload['html'] ?? '',
+              text: dto.payload['text'],
+            }),
+          },
+          { delay: delayMs > 0 ? delayMs : 0, jobId: `delayed-${log.id}` },
+        ),
+        ENQUEUE_TIMEOUT_MS,
+        `Enqueue ${jobName}`,
+      );
+      this.logger.log(
+        `Enqueued ${jobName} with delay ${delayMs}ms for notification ${log.id}`,
+      );
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to enqueue delayed ${jobName} job for notification ${log.id}: ${err.message}`,
+      );
+      await this.markFailed(log.id, err.message ?? 'Failed to enqueue job');
+    }
     return log;
   }
 
