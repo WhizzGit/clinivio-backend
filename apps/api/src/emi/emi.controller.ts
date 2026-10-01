@@ -38,10 +38,14 @@ export class EmiController {
   @Get("plans")
   @Roles("ADMIN", "RECEPTIONIST", "DOCTOR")
   @ApiOperation({ summary: "List EMI plans (active or history)" })
-  findAll(@TenantId() tenantId: string, @Query("status") status?: string) {
+  findAll(
+    @TenantId() tenantId: string,
+    @Query("status") status?: string,
+    @Query("patientId") patientId?: string,
+  ) {
     return status === "history"
-      ? this.svc.findHistory(tenantId)
-      : this.svc.findActivePlans(tenantId);
+      ? this.svc.findHistory(tenantId, patientId)
+      : this.svc.findActivePlans(tenantId, patientId);
   }
 
   @Get("plans/:id")

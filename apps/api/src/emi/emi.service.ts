@@ -440,19 +440,20 @@ export class EmiService {
     });
   }
 
-  async findActivePlans(tenantId: string) {
+  async findActivePlans(tenantId: string, patientId?: string) {
     return this.db.repo(EmiPlan).find({
-      where: { tenantId, status: EmiPlanStatus.ACTIVE },
+      where: { tenantId, status: EmiPlanStatus.ACTIVE, ...(patientId && { patientId }) },
       relations: ["patient", "installments"],
       order: { createdAt: "DESC" },
     });
   }
 
-  async findHistory(tenantId: string) {
+  async findHistory(tenantId: string, patientId?: string) {
     return this.db.repo(EmiPlan).find({
       where: {
         tenantId,
         status: In([EmiPlanStatus.COMPLETED, EmiPlanStatus.CANCELLED]),
+        ...(patientId && { patientId }),
       },
       relations: ["patient", "installments"],
       order: { updatedAt: "DESC" },
